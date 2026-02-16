@@ -55,3 +55,32 @@ function blobToBase64(blob: Blob): Promise<string> {
 export function fileToBase64(file: File): Promise<string> {
   return blobToBase64(file);
 }
+
+const THUMBNAIL_MAX_DIMENSION = 400;
+const THUMBNAIL_QUALITY = 0.6;
+
+export async function createThumbnail(base64: string): Promise<string> {
+  const img = new Image();
+  img.src = `data:image/jpeg;base64,${base64}`;
+
+  await new Promise<void>((resolve, reject) => {
+    img.onload = () => resolve();
+    img.onerror = reject;
+  });
+
+  const { width, height } = img;
+  const scale = THUMBNAIL_MAX_DIMENSION / Math.max(width, height);
+
+  // Skip if already small enough
+  const targetWidth = scale < 1 ? Math.round(width * scale) : width;
+  const targetHeight = scale < 1 ? Math.round(height * scale) : height;
+
+  const canvas = document.createElement("canvas");
+  canvas.width = targetWidth;
+  canvas.height = targetHeight;
+  const ctx = canvas.getContext("2d")!;
+  ctx.drawImage(img, 0, 0, targetWidth, targetHeight);
+
+  // Return raw base64 without data URL prefix
+  return canvas.toDataURL("image/jpeg", THUMBNAIL_QUALITY).split(",")[1];
+}

@@ -3,12 +3,18 @@
 import { useCallback, useState } from "react";
 import { PasteZone } from "@/components/analyzer/PasteZone";
 import { AnalysisResult } from "@/components/analyzer/AnalysisResult";
+import { HandHistory } from "@/components/history/HandHistory";
 
 export default function Home() {
   const [imageBase64, setImageBase64] = useState<string | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   const handleReset = useCallback(() => {
     setImageBase64(null);
+  }, []);
+
+  const handleHandSaved = useCallback(() => {
+    setRefreshKey((k) => k + 1);
   }, []);
 
   return (
@@ -46,7 +52,10 @@ export default function Home() {
         <PasteZone onImageReady={setImageBase64} disabled={!!imageBase64} />
 
         {/* Analysis result */}
-        <AnalysisResult imageBase64={imageBase64} />
+        <AnalysisResult
+          imageBase64={imageBase64}
+          onHandSaved={handleHandSaved}
+        />
 
         {/* Reset button */}
         {imageBase64 && (
@@ -59,6 +68,9 @@ export default function Home() {
             </button>
           </div>
         )}
+
+        {/* Hand history */}
+        <HandHistory refreshKey={refreshKey} />
       </main>
 
       {/* Footer */}

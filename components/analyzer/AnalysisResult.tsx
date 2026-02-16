@@ -3,28 +3,51 @@
 import { useEffect, useRef } from "react";
 import { experimental_useObject as useObject } from "@ai-sdk/react";
 import { handAnalysisSchema } from "@/lib/ai/schema";
+import type { HandAnalysis } from "@/lib/ai/schema";
 import { ACTION_COLORS } from "@/lib/poker/types";
 import type { PokerAction } from "@/lib/poker/types";
+import { createThumbnail } from "@/lib/utils/image";
+import { saveHand } from "@/lib/storage/hands";
 import { LoadingState } from "./LoadingState";
 
 interface AnalysisResultProps {
   imageBase64: string | null;
+  onHandSaved?: () => void;
 }
 
-export function AnalysisResult({ imageBase64 }: AnalysisResultProps) {
+export function AnalysisResult({ imageBase64, onHandSaved }: AnalysisResultProps) {
   const { object, submit, isLoading, error } = useObject({
     api: "/api/analyze",
     schema: handAnalysisSchema,
   });
 
   const submittedRef = useRef<string | null>(null);
+  const savedRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (imageBase64 && imageBase64 !== submittedRef.current) {
       submittedRef.current = imageBase64;
+      savedRef.current = null;
       submit({ image: imageBase64 });
     }
   }, [imageBase64, submit]);
+
+  // Auto-save when streaming completes
+  useEffect(() => {
+    if (
+      !isLoading &&
+      object?.action &&
+      object?.reasoning &&
+      imageBase64 &&
+      imageBase64 !== savedRef.current
+    ) {
+      savedRef.current = imageBase64;
+      createThumbnail(imageBase64).then((thumbnail) => {
+        saveHand(thumbnail, object as HandAnalysis);
+        onHandSaved?.();
+      });
+    }
+  }, [isLoading, object, imageBase64, onHandSaved]);
 
   if (!imageBase64) return null;
 
