@@ -1,5 +1,43 @@
 import { z } from "zod";
 
+export const PLAYER_TYPES = [
+  "TIGHT_PASSIVE",
+  "TIGHT_AGGRESSIVE",
+  "LOOSE_PASSIVE",
+  "LOOSE_AGGRESSIVE",
+  "UNKNOWN",
+] as const;
+
+export type PlayerType = (typeof PLAYER_TYPES)[number];
+
+const opponentSchema = z.object({
+  seat: z.number().describe("Seat number (1-9)"),
+  username: z
+    .string()
+    .optional()
+    .describe("Player username if visible"),
+  position: z
+    .enum(["UTG", "MP", "CO", "BTN", "SB", "BB"])
+    .optional()
+    .describe("Player's position at the table"),
+  stack: z
+    .string()
+    .describe("Stack size, e.g. '95 BB' or '$190'"),
+  currentAction: z
+    .string()
+    .optional()
+    .describe("Action this hand if visible, e.g. 'RAISE 3BB', 'FOLD'"),
+  playerType: z
+    .enum(PLAYER_TYPES)
+    .describe("Inferred player type based on visible information"),
+  notes: z
+    .string()
+    .optional()
+    .describe("Brief read on this player based on visible clues"),
+});
+
+export type Opponent = z.infer<typeof opponentSchema>;
+
 export const handAnalysisSchema = z.object({
   heroCards: z
     .string()
@@ -19,6 +57,12 @@ export const handAnalysisSchema = z.object({
   street: z
     .enum(["PREFLOP", "FLOP", "TURN", "RIVER"])
     .describe("Current street / betting round"),
+  opponents: z
+    .array(opponentSchema)
+    .describe("All visible opponents at the table"),
+  exploitAnalysis: z
+    .string()
+    .describe("How the recommendation exploits specific opponent tendencies at this table"),
   action: z
     .enum(["FOLD", "CHECK", "CALL", "BET", "RAISE"])
     .describe("Recommended action"),

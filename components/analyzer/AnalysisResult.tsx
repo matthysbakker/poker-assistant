@@ -3,19 +3,30 @@
 import { useEffect, useRef } from "react";
 import { experimental_useObject as useObject } from "@ai-sdk/react";
 import { handAnalysisSchema } from "@/lib/ai/schema";
-import type { HandAnalysis } from "@/lib/ai/schema";
+import type { HandAnalysis, Opponent } from "@/lib/ai/schema";
 import { ACTION_COLORS } from "@/lib/poker/types";
 import type { PokerAction } from "@/lib/poker/types";
 import { createThumbnail } from "@/lib/utils/image";
 import { saveHand } from "@/lib/storage/hands";
 import { LoadingState } from "./LoadingState";
+import { OpponentTable } from "./OpponentTable";
 
 interface AnalysisResultProps {
   imageBase64: string | null;
+  opponentHistory?: Record<
+    number,
+    { username?: string; handsObserved: number; actions: string[]; inferredType: string }
+  >;
   onHandSaved?: () => void;
+  onOpponentsDetected?: (opponents: Opponent[]) => void;
 }
 
-export function AnalysisResult({ imageBase64, onHandSaved }: AnalysisResultProps) {
+export function AnalysisResult({
+  imageBase64,
+  opponentHistory,
+  onHandSaved,
+  onOpponentsDetected,
+}: AnalysisResultProps) {
   const { object, submit, isLoading, error } = useObject({
     api: "/api/analyze",
     schema: handAnalysisSchema,
@@ -28,11 +39,11 @@ export function AnalysisResult({ imageBase64, onHandSaved }: AnalysisResultProps
     if (imageBase64 && imageBase64 !== submittedRef.current) {
       submittedRef.current = imageBase64;
       savedRef.current = null;
-      submit({ image: imageBase64 });
+      submit({ image: imageBase64, opponentHistory });
     }
-  }, [imageBase64, submit]);
+  }, [imageBase64, submit, opponentHistory]);
 
-  // Auto-save when streaming completes
+  // Auto-save and update session when streaming completes
   useEffect(() => {
     if (
       !isLoading &&
@@ -42,12 +53,24 @@ export function AnalysisResult({ imageBase64, onHandSaved }: AnalysisResultProps
       imageBase64 !== savedRef.current
     ) {
       savedRef.current = imageBase64;
+
+      // Update opponent session
+      if (object.opponents && object.opponents.length > 0) {
+        const validOpponents = object.opponents.filter(
+          (o): o is Opponent =>
+            o !== undefined && o.seat !== undefined && o.playerType !== undefined,
+        );
+        if (validOpponents.length > 0) {
+          onOpponentsDetected?.(validOpponents);
+        }
+      }
+
       createThumbnail(imageBase64).then((thumbnail) => {
         saveHand(thumbnail, object as HandAnalysis);
         onHandSaved?.();
       });
     }
-  }, [isLoading, object, imageBase64, onHandSaved]);
+  }, [isLoading, object, imageBase64, onHandSaved, onOpponentsDetected]);
 
   if (!imageBase64) return null;
 
@@ -134,6 +157,27 @@ export function AnalysisResult({ imageBase64, onHandSaved }: AnalysisResultProps
               <span className="text-zinc-200">{object.heroStack}</span>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Opponents */}
+      {object.opponents && object.opponents.length > 0 && (
+        <OpponentTable
+          opponents={object.opponents.filter(
+            (o): o is Partial<Opponent> => o !== undefined,
+          )}
+        />
+      )}
+
+      {/* Exploit analysis */}
+      {object.exploitAnalysis && (
+        <div>
+          <h3 className="mb-2 text-sm font-semibold text-zinc-400">
+            Exploit Analysis
+          </h3>
+          <p className="whitespace-pre-wrap text-sm leading-relaxed text-zinc-300">
+            {object.exploitAnalysis}
+          </p>
         </div>
       )}
 

@@ -1,20 +1,50 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { PasteZone } from "@/components/analyzer/PasteZone";
 import { AnalysisResult } from "@/components/analyzer/AnalysisResult";
 import { HandHistory } from "@/components/history/HandHistory";
+import type { Opponent } from "@/lib/ai/schema";
+import {
+  getOpponentContext,
+  getSession,
+  resetSession,
+  updateOpponentProfiles,
+} from "@/lib/storage/sessions";
 
 export default function Home() {
   const [imageBase64, setImageBase64] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [sessionHandCount, setSessionHandCount] = useState(() => {
+    if (typeof window === "undefined") return 0;
+    return getSession().handCount;
+  });
+
+  // Use a ref for opponent history to avoid re-triggering the submit useEffect
+  const opponentHistoryRef = useRef(getOpponentContext());
+  const [opponentHistory, setOpponentHistory] = useState(opponentHistoryRef.current);
 
   const handleReset = useCallback(() => {
+    // Snapshot current opponent context before resetting image
+    opponentHistoryRef.current = getOpponentContext();
+    setOpponentHistory(opponentHistoryRef.current);
     setImageBase64(null);
   }, []);
 
   const handleHandSaved = useCallback(() => {
     setRefreshKey((k) => k + 1);
+  }, []);
+
+  const handleOpponentsDetected = useCallback((opponents: Opponent[]) => {
+    const session = updateOpponentProfiles(opponents);
+    setSessionHandCount(session.handCount);
+  }, []);
+
+  const handleResetSession = useCallback(() => {
+    resetSession();
+    opponentHistoryRef.current = undefined;
+    setOpponentHistory(undefined);
+    setSessionHandCount(0);
   }, []);
 
   return (
@@ -29,6 +59,21 @@ export default function Home() {
             Paste a screenshot. Get instant strategy advice.
           </p>
         </div>
+
+        {/* Session indicator */}
+        {sessionHandCount > 0 && (
+          <div className="flex items-center justify-between rounded-lg bg-zinc-900/50 px-4 py-2 text-sm">
+            <span className="text-zinc-400">
+              Session: {sessionHandCount} hand{sessionHandCount !== 1 ? "s" : ""} analyzed
+            </span>
+            <button
+              onClick={handleResetSession}
+              className="text-zinc-500 transition-colors hover:text-zinc-300"
+            >
+              New session
+            </button>
+          </div>
+        )}
 
         {/* How it works */}
         {!imageBase64 && (
@@ -54,7 +99,9 @@ export default function Home() {
         {/* Analysis result */}
         <AnalysisResult
           imageBase64={imageBase64}
+          opponentHistory={opponentHistory}
           onHandSaved={handleHandSaved}
+          onOpponentsDetected={handleOpponentsDetected}
         />
 
         {/* Reset button */}
