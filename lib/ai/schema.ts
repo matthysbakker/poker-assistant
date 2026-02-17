@@ -39,12 +39,20 @@ const opponentSchema = z.object({
 export type Opponent = z.infer<typeof opponentSchema>;
 
 export const handAnalysisSchema = z.object({
+  cardReadingNotes: z
+    .string()
+    .describe(
+      "If detected cards were provided: confirm them and note any additional observations from the image. " +
+      "If no detected cards: describe exactly what you see on each card — " +
+      "rank symbol/letter in the corner, SHAPE of the suit symbol (pointed leaf = spade, three lobes = club, heart shape, rhombus = diamond). " +
+      "Note if a rank could be 6 or 9 (check orientation)."
+    ),
   heroCards: z
     .string()
-    .describe("Hero's hole cards, e.g. 'Ah Kd'"),
+    .describe("Hero's hole cards based on your card reading notes above, e.g. 'Ah Kd'"),
   communityCards: z
     .string()
-    .describe("Community cards on the board, e.g. 'Qs Jc 10h'. Empty if preflop"),
+    .describe("Community cards based on your card reading notes above, e.g. 'Qs Jc 10h'. Empty if preflop"),
   heroPosition: z
     .enum(["UTG", "MP", "CO", "BTN", "SB", "BB"])
     .describe("Hero's position at the table"),

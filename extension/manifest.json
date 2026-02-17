@@ -1,0 +1,40 @@
+{
+  "manifest_version": 2,
+  "name": "Poker Hand Analyzer",
+  "version": "1.0.0",
+  "description": "Capture poker table screenshots and send them to Poker Hand Analyzer for instant AI strategy advice.",
+  "permissions": ["activeTab", "<all_urls>"],
+  "background": {
+    "scripts": ["dist/background.js"],
+    "persistent": true
+  },
+  "content_scripts": [
+    {
+      "matches": ["*://localhost/*"],
+      "js": ["dist/content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "browser_action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "48": "icons/icon-48.png",
+      "128": "icons/icon-128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon-16.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "commands": {
+    "capture-hand": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+P",
+        "mac": "MacCtrl+Shift+P"
+      },
+      "description": "Capture poker table screenshot"
+    }
+  }
+}

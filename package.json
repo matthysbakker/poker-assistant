@@ -6,7 +6,13 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "build:extension": "bun build extension/src/background.ts --outfile extension/dist/background.js && bun build extension/src/content.ts --outfile extension/dist/content.js && bun build extension/src/popup.ts --outfile extension/dist/popup.js",
+    "cards:calibrate": "bun run scripts/calibrate-regions.ts",
+    "cards:extract": "bun run scripts/extract-corners.ts",
+    "cards:label": "bun run scripts/label-card.ts",
+    "cards:status": "bun run scripts/check-references.ts",
+    "cards:test": "bun run scripts/test-detection.ts"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.44",
@@ -23,6 +29,7 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "babel-plugin-react-compiler": "1.0.0",
+    "chrome-types": "^0.1.415",
     "eslint": "^9",
     "eslint-config-next": "16.1.6",
     "tailwindcss": "^4",

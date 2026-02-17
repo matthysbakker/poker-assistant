@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { PasteZone } from "@/components/analyzer/PasteZone";
 import { AnalysisResult } from "@/components/analyzer/AnalysisResult";
 import { HandHistory } from "@/components/history/HandHistory";
@@ -23,6 +23,28 @@ export default function Home() {
   // Use a ref for opponent history to avoid re-triggering the submit useEffect
   const opponentHistoryRef = useRef(getOpponentContext());
   const [opponentHistory, setOpponentHistory] = useState(opponentHistoryRef.current);
+
+  const [extensionConnected, setExtensionConnected] = useState(false);
+
+  // Listen for captures and connection status from the browser extension
+  useEffect(() => {
+    function handleMessage(event: MessageEvent) {
+      if (event.data?.source !== "poker-assistant-ext") return;
+
+      if (event.data.type === "CAPTURE" && event.data.base64) {
+        opponentHistoryRef.current = getOpponentContext();
+        setOpponentHistory(opponentHistoryRef.current);
+        setImageBase64(event.data.base64);
+      } else if (event.data.type === "EXTENSION_CONNECTED") {
+        setExtensionConnected(true);
+      }
+    }
+
+    window.addEventListener("message", handleMessage);
+    // Ping to discover an already-loaded content script
+    window.postMessage({ source: "poker-assistant-app", type: "PING" }, "*");
+    return () => window.removeEventListener("message", handleMessage);
+  }, []);
 
   const handleReset = useCallback(() => {
     // Snapshot current opponent context before resetting image
@@ -58,6 +80,12 @@ export default function Home() {
           <p className="mt-3 text-lg text-zinc-400">
             Paste a screenshot. Get instant strategy advice.
           </p>
+          {extensionConnected && (
+            <div className="mt-3 inline-flex items-center gap-2 rounded-full bg-emerald-950/50 px-3 py-1 text-xs text-emerald-400">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+              Extension connected
+            </div>
+          )}
         </div>
 
         {/* Session indicator */}
