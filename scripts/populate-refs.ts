@@ -36,6 +36,9 @@ const GROUND_TRUTH: Record<string, { hero: string[]; community: string[] }> = {
   "2026-02-17T14-35-15-232Z": { hero: ["Kh", "6h"], community: ["2c", "4d", "3s", "9d"] },
   "2026-02-17T14-36-28-902Z": { hero: ["Ks", "Kd"], community: [] },
   "2026-02-17T22-03-53-545Z": { hero: ["Qc", "3c"], community: [] },
+  "2026-02-17T23-34-25-924Z": { hero: ["Ad", "9d"], community: [] },
+  "2026-02-17T23-36-03-587Z": { hero: ["10s", "Qs"], community: [] },
+  "2026-02-17T23-36-29-216Z": { hero: ["Ad", "10h"], community: [] },
 };
 
 const files = readdirSync(CAPTURES_DIR).filter((f) => f.endsWith(".png")).sort();
