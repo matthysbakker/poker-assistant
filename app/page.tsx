@@ -38,6 +38,7 @@ export default function Home() {
   // Listen for captures and connection status from the browser extension
   useEffect(() => {
     function handleMessage(event: MessageEvent) {
+      if (event.origin !== window.location.origin) return;
       if (event.data?.source !== "poker-assistant-ext") return;
 
       if (event.data.type === "CAPTURE" && event.data.base64) {
@@ -56,7 +57,7 @@ export default function Home() {
     }
 
     window.addEventListener("message", handleMessage);
-    window.postMessage({ source: "poker-assistant-app", type: "PING" }, "*");
+    window.postMessage({ source: "poker-assistant-app", type: "PING" }, window.location.origin);
     return () => window.removeEventListener("message", handleMessage);
   }, [switchToManual, setCaptureMode, handleFrame]);
 

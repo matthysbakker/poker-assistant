@@ -1,3 +1,5 @@
+// Extension message protocol — see background.ts for full type reference
+
 const statusDot = document.getElementById("status-dot") as HTMLElement;
 const statusText = document.getElementById("status-text") as HTMLElement;
 const hotkeyEl = document.getElementById("hotkey") as HTMLElement;
