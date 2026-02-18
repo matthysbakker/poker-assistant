@@ -17,15 +17,19 @@ interface AnalysisResultProps {
     number,
     { username?: string; handsObserved: number; actions: string[]; inferredType: string }
   >;
+  handContext?: string;
   onHandSaved?: () => void;
   onOpponentsDetected?: (opponents: Opponent[]) => void;
+  onAnalysisComplete?: () => void;
 }
 
 export function AnalysisResult({
   imageBase64,
   opponentHistory,
+  handContext,
   onHandSaved,
   onOpponentsDetected,
+  onAnalysisComplete,
 }: AnalysisResultProps) {
   const { object, submit, isLoading, error } = useObject({
     api: "/api/analyze",
@@ -39,9 +43,9 @@ export function AnalysisResult({
     if (imageBase64 && imageBase64 !== submittedRef.current) {
       submittedRef.current = imageBase64;
       savedRef.current = null;
-      submit({ image: imageBase64, opponentHistory });
+      submit({ image: imageBase64, opponentHistory, handContext });
     }
-  }, [imageBase64, submit, opponentHistory]);
+  }, [imageBase64, submit, opponentHistory, handContext]);
 
   // Auto-save and update session when streaming completes
   useEffect(() => {
@@ -69,8 +73,10 @@ export function AnalysisResult({
         saveHand(thumbnail, object as HandAnalysis);
         onHandSaved?.();
       });
+
+      onAnalysisComplete?.();
     }
-  }, [isLoading, object, imageBase64, onHandSaved, onOpponentsDetected]);
+  }, [isLoading, object, imageBase64, onHandSaved, onOpponentsDetected, onAnalysisComplete]);
 
   if (!imageBase64) return null;
 

@@ -11,6 +11,10 @@ import {
   resetSession,
   updateOpponentProfiles,
 } from "@/lib/storage/sessions";
+import { useHandTracker, buildHandContext } from "@/lib/hand-tracking";
+import type { DetectionResult } from "@/lib/card-detection/types";
+
+type CaptureMode = "manual" | "continuous";
 
 export default function Home() {
   const [imageBase64, setImageBase64] = useState<string | null>(null);
@@ -20,11 +24,27 @@ export default function Home() {
     return getSession().handCount;
   });
 
-  // Use a ref for opponent history to avoid re-triggering the submit useEffect
   const opponentHistoryRef = useRef(getOpponentContext());
   const [opponentHistory, setOpponentHistory] = useState(opponentHistoryRef.current);
-
   const [extensionConnected, setExtensionConnected] = useState(false);
+
+  // Hand tracking for continuous mode
+  const { state: handState, feedDetection, markAnalysisStarted, markAnalysisComplete, reset: resetTracker } = useHandTracker();
+  const [captureMode, setCaptureMode] = useState<CaptureMode>("manual");
+  const [handContext, setHandContext] = useState<string | undefined>();
+  const detectingRef = useRef(false);
+
+  // When hand state says we should analyze, trigger Claude
+  useEffect(() => {
+    if (handState.shouldAnalyze && handState.street !== "WAITING" && imageBase64) {
+      const context = buildHandContext(handState);
+      setHandContext(context || undefined);
+      markAnalysisStarted();
+      // imageBase64 is already set from the latest frame — AnalysisResult will submit
+      opponentHistoryRef.current = getOpponentContext();
+      setOpponentHistory(opponentHistoryRef.current);
+    }
+  }, [handState.shouldAnalyze, handState.street, imageBase64, markAnalysisStarted]);
 
   // Listen for captures and connection status from the browser extension
   useEffect(() => {
@@ -32,26 +52,60 @@ export default function Home() {
       if (event.data?.source !== "poker-assistant-ext") return;
 
       if (event.data.type === "CAPTURE" && event.data.base64) {
+        // Manual hotkey capture → immediate full analysis
+        setCaptureMode("manual");
+        setHandContext(undefined);
         opponentHistoryRef.current = getOpponentContext();
         setOpponentHistory(opponentHistoryRef.current);
         setImageBase64(event.data.base64);
+      } else if (event.data.type === "FRAME" && event.data.base64) {
+        // Continuous capture frame → feed to state machine
+        setCaptureMode("continuous");
+        handleContinuousFrame(event.data.base64);
       } else if (event.data.type === "EXTENSION_CONNECTED") {
         setExtensionConnected(true);
       }
     }
 
     window.addEventListener("message", handleMessage);
-    // Ping to discover an already-loaded content script
     window.postMessage({ source: "poker-assistant-app", type: "PING" }, "*");
     return () => window.removeEventListener("message", handleMessage);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  async function handleContinuousFrame(base64: string) {
+    // Debounce: skip if a detection is already in flight
+    if (detectingRef.current) return;
+    detectingRef.current = true;
+
+    try {
+      const res = await fetch("/api/detect", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ image: base64 }),
+      });
+
+      if (res.ok) {
+        const detection: DetectionResult = await res.json();
+        feedDetection(detection);
+        // Keep the latest frame for when Claude analysis is triggered
+        setImageBase64(base64);
+      }
+    } catch {
+      // Network error — skip this frame
+    } finally {
+      detectingRef.current = false;
+    }
+  }
+
   const handleReset = useCallback(() => {
-    // Snapshot current opponent context before resetting image
     opponentHistoryRef.current = getOpponentContext();
     setOpponentHistory(opponentHistoryRef.current);
     setImageBase64(null);
-  }, []);
+    setHandContext(undefined);
+    resetTracker();
+    setCaptureMode("manual");
+  }, [resetTracker]);
 
   const handleHandSaved = useCallback(() => {
     setRefreshKey((k) => k + 1);
@@ -68,6 +122,13 @@ export default function Home() {
     setOpponentHistory(undefined);
     setSessionHandCount(0);
   }, []);
+
+  const handleAnalysisComplete = useCallback(() => {
+    markAnalysisComplete();
+  }, [markAnalysisComplete]);
+
+  const isContinuous = captureMode === "continuous";
+  const showStreetBadge = isContinuous && handState.street !== "WAITING";
 
   return (
     <div className="flex min-h-screen flex-col items-center px-4 py-12 font-sans">
@@ -88,6 +149,45 @@ export default function Home() {
           )}
         </div>
 
+        {/* Continuous mode status */}
+        {isContinuous && (
+          <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 p-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                {showStreetBadge && (
+                  <span className="rounded-md bg-indigo-600 px-2.5 py-1 text-xs font-bold text-white">
+                    {handState.street}
+                  </span>
+                )}
+                <span className="text-sm text-zinc-400">
+                  {handState.street === "WAITING"
+                    ? "Watching for new hand..."
+                    : handState.heroTurn
+                      ? handState.analyzing
+                        ? "Your turn — analyzing..."
+                        : "Your turn"
+                      : `Tracking — ${handState.heroCards.join(" ") || "..."}`}
+                </span>
+              </div>
+              {handState.heroCards.length > 0 && (
+                <div className="flex items-center gap-2 text-sm">
+                  <span className="font-mono text-zinc-300">
+                    {handState.heroCards.join(" ")}
+                  </span>
+                  {handState.communityCards.length > 0 && (
+                    <>
+                      <span className="text-zinc-600">|</span>
+                      <span className="font-mono text-zinc-400">
+                        {handState.communityCards.join(" ")}
+                      </span>
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Session indicator */}
         {sessionHandCount > 0 && (
           <div className="flex items-center justify-between rounded-lg bg-zinc-900/50 px-4 py-2 text-sm">
@@ -104,7 +204,7 @@ export default function Home() {
         )}
 
         {/* How it works */}
-        {!imageBase64 && (
+        {!imageBase64 && !isContinuous && (
           <div className="grid grid-cols-3 gap-4 text-center text-sm">
             <div className="rounded-lg bg-card-bg p-4">
               <div className="mb-2 text-2xl">1</div>
@@ -121,19 +221,23 @@ export default function Home() {
           </div>
         )}
 
-        {/* Paste zone */}
-        <PasteZone onImageReady={setImageBase64} disabled={!!imageBase64} />
+        {/* Paste zone (hidden during continuous mode) */}
+        {!isContinuous && (
+          <PasteZone onImageReady={setImageBase64} disabled={!!imageBase64} />
+        )}
 
         {/* Analysis result */}
         <AnalysisResult
           imageBase64={imageBase64}
           opponentHistory={opponentHistory}
+          handContext={handContext}
           onHandSaved={handleHandSaved}
           onOpponentsDetected={handleOpponentsDetected}
+          onAnalysisComplete={handleAnalysisComplete}
         />
 
         {/* Reset button */}
-        {imageBase64 && (
+        {imageBase64 && !isContinuous && (
           <div className="text-center">
             <button
               onClick={handleReset}
