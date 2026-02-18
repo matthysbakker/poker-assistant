@@ -60,7 +60,7 @@ export function handReducer(state: HandState, action: HandAction): HandState {
     case "ANALYSIS_COMPLETE":
       return { ...state, analyzing: false };
     case "RESET":
-      return INITIAL_STATE;
+      return { ...INITIAL_STATE };
     default:
       return state;
   }
@@ -137,7 +137,6 @@ function handleDetection(
         analyzeGeneration: triggerAnalysis
           ? state.analyzeGeneration + 1
           : state.analyzeGeneration,
-        analyzing: false,
       };
     }
     return { ...state, frameCount: newCount, heroTurn };
