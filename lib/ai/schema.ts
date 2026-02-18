@@ -42,20 +42,31 @@ export const handAnalysisSchema = z.object({
   cardReadingNotes: z
     .string()
     .describe(
-      "If detected cards were provided: confirm them and note any additional observations from the image. " +
-      "If no detected cards: describe exactly what you see on each card — " +
-      "rank symbol/letter in the corner, SHAPE of the suit symbol (pointed leaf = spade, three lobes = club, heart shape, rhombus = diamond). " +
+      "If detected cards were provided: repeat the detected cards exactly as given — they are ground truth. " +
+      "Only describe what you see for any cards marked [unreadable]. " +
+      "If no detected cards were provided: describe exactly what you see on each card — " +
+      "rank symbol/letter in the corner, SHAPE of the suit symbol. " +
       "Note if a rank could be 6 or 9 (check orientation)."
     ),
   heroCards: z
     .string()
-    .describe("Hero's hole cards based on your card reading notes above, e.g. 'Ah Kd'"),
+    .describe(
+      "Hero's hole cards. If detected cards were provided, use them exactly. " +
+      "Only read from the image if no detection was provided. Format: e.g. 'Ah Kd'"
+    ),
   communityCards: z
     .string()
-    .describe("Community cards based on your card reading notes above, e.g. 'Qs Jc 10h'. Empty if preflop"),
+    .describe(
+      "Community cards. If detected cards were provided, use them exactly. " +
+      "Only read from the image if no detection was provided. Format: e.g. 'Qs Jc Th'. Empty string if preflop"
+    ),
   heroPosition: z
     .enum(["UTG", "MP", "CO", "BTN", "SB", "BB"])
-    .describe("Hero's position at the table"),
+    .describe(
+      "Hero's position at the table. Find the dealer button (marked 'D' or 'DEALER') on the table, " +
+      "then determine hero's seat relative to it. The player ON the button is BTN, " +
+      "the next player clockwise is SB, then BB, then UTG, MP, CO."
+    ),
   potSize: z
     .string()
     .describe("Current pot size, e.g. '120 BB' or '$24'"),
