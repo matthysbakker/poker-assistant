@@ -50,5 +50,6 @@ export interface DetectionResult {
   heroCards: CardMatch[];
   communityCards: CardMatch[];
   detectedText: string;
+  heroTurn: boolean;
   timing: number;
 }

@@ -387,17 +387,17 @@ Mitigation: test Firefox behavior. Note to user: "keep the poker tab in the fore
 
 ## Implementation Order
 
-1. Validate JPEG detection accuracy (quick script)
-2. Build action button detection + add to detect pipeline
-3. Create `/api/detect` endpoint
-4. Build state machine module with hysteresis
-5. Extension: continuous capture in background.ts + popup toggle
-6. Web app: integrate hand tracker + dual capture modes
-7. Curate preflop chart data (4 personas x 6 positions)
-8. Build persona chart lookup + display widget
-9. Wire Claude trigger (heroTurn-based) with hand context
-10. Web app: street indicator + status UI
-11. End-to-end testing with live poker session
+1. ~~Validate JPEG detection accuracy (quick script)~~ — deferred, using JPEG 85% by default
+2. [x] Build action button detection + add to detect pipeline
+3. [x] Create `/api/detect` endpoint
+4. [x] Build state machine module with hysteresis
+5. [x] Extension: continuous capture in background.ts + popup toggle
+6. [x] Web app: integrate hand tracker + dual capture modes
+7. ~~Curate preflop chart data (4 personas x 6 positions)~~ — deferred
+8. ~~Build persona chart lookup + display widget~~ — deferred
+9. [x] Wire Claude trigger (heroTurn-based) with hand context
+10. [x] Web app: street indicator + status UI
+11. [ ] End-to-end testing with live poker session
 
 ## Future Enhancements (Not in Scope)
 

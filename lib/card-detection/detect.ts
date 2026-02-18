@@ -2,6 +2,7 @@ import sharp from "sharp";
 import { locateCards } from "./locate";
 import { cropCorner, matchCard } from "./match";
 import { preprocessCrop } from "./preprocess";
+import { detectActionButtons } from "./buttons";
 import type { CardMatch, DetectionResult } from "./types";
 
 /** Detect cards from a base64-encoded screenshot. */
@@ -34,12 +35,16 @@ export async function detectCards(base64: string): Promise<DetectionResult> {
     }
   }
 
+  // Step 3: Detect action buttons (hero's turn indicator)
+  const heroTurn = await detectActionButtons(imageBuffer);
+
   const timing = Math.round(performance.now() - start);
 
   return {
     heroCards,
     communityCards,
     detectedText: formatDetectedCards(heroCards, communityCards),
+    heroTurn,
     timing,
   };
 }

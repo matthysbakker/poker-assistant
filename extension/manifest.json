@@ -3,7 +3,7 @@
   "name": "Poker Hand Analyzer",
   "version": "1.0.0",
   "description": "Capture poker table screenshots and send them to Poker Hand Analyzer for instant AI strategy advice.",
-  "permissions": ["activeTab", "<all_urls>"],
+  "permissions": ["activeTab", "tabs", "<all_urls>"],
   "background": {
     "scripts": ["dist/background.js"],
     "persistent": true

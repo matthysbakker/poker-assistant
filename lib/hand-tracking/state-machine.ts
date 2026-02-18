@@ -1,0 +1,157 @@
+import type { DetectionResult } from "@/lib/card-detection/types";
+import type { HandState, HandAction, Street, StreetSnapshot } from "./types";
+
+/** Frames required to confirm a forward street transition. */
+const FORWARD_HYSTERESIS = 2;
+/** Frames required to confirm transition to WAITING (hand ended). */
+const WAITING_HYSTERESIS = 3;
+
+export const INITIAL_STATE: HandState = {
+  street: "WAITING",
+  handId: null,
+  heroCards: [],
+  communityCards: [],
+  heroTurn: false,
+  streets: [],
+  frameCount: 0,
+  pendingStreet: null,
+  shouldAnalyze: false,
+  analyzing: false,
+};
+
+/** Map community card count to expected street. */
+function streetFromCommunityCount(
+  heroCount: number,
+  communityCount: number,
+): Street {
+  if (heroCount === 0) return "WAITING";
+  if (communityCount === 0) return "PREFLOP";
+  if (communityCount <= 3) return "FLOP";
+  if (communityCount === 4) return "TURN";
+  return "RIVER";
+}
+
+/** Street ordering for forward-only enforcement. */
+const STREET_ORDER: Record<Street, number> = {
+  WAITING: 0,
+  PREFLOP: 1,
+  FLOP: 2,
+  TURN: 3,
+  RIVER: 4,
+};
+
+function generateHandId(): string {
+  return `hand-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+}
+
+/** Extract card codes from detection result. */
+function cardCodes(detection: DetectionResult): {
+  hero: string[];
+  community: string[];
+} {
+  return {
+    hero: detection.heroCards
+      .filter((m) => m.card !== null)
+      .map((m) => m.card!),
+    community: detection.communityCards
+      .filter((m) => m.card !== null)
+      .map((m) => m.card!),
+  };
+}
+
+/** Core state machine reducer. */
+export function handReducer(state: HandState, action: HandAction): HandState {
+  switch (action.type) {
+    case "DETECTION":
+      return handleDetection(state, action.detection);
+    case "ANALYSIS_STARTED":
+      return { ...state, analyzing: true, shouldAnalyze: false };
+    case "ANALYSIS_COMPLETE":
+      return { ...state, analyzing: false };
+    case "RESET":
+      return INITIAL_STATE;
+    default:
+      return state;
+  }
+}
+
+function handleDetection(
+  state: HandState,
+  detection: DetectionResult,
+): HandState {
+  const { hero, community } = cardCodes(detection);
+  const detectedStreet = streetFromCommunityCount(hero.length, community.length);
+  const heroTurn = detection.heroTurn;
+
+  // Determine if this is the same street or a transition
+  if (detectedStreet === state.street) {
+    // Same street — reset pending, update heroTurn
+    const shouldAnalyze =
+      heroTurn && !state.heroTurn && !state.analyzing && state.street !== "WAITING";
+    return {
+      ...state,
+      heroCards: hero.length > 0 ? hero : state.heroCards,
+      communityCards: community.length > 0 ? community : state.communityCards,
+      heroTurn,
+      frameCount: 0,
+      pendingStreet: null,
+      shouldAnalyze: shouldAnalyze || state.shouldAnalyze,
+    };
+  }
+
+  // Transitioning to WAITING (hand ended)
+  if (detectedStreet === "WAITING") {
+    const threshold = WAITING_HYSTERESIS;
+    if (state.pendingStreet === "WAITING") {
+      const newCount = state.frameCount + 1;
+      if (newCount >= threshold) {
+        // Hand ended — reset
+        return {
+          ...INITIAL_STATE,
+        };
+      }
+      return { ...state, frameCount: newCount, heroTurn };
+    }
+    // Start counting toward WAITING
+    return { ...state, pendingStreet: "WAITING", frameCount: 1, heroTurn };
+  }
+
+  // Forward-only: ignore backward transitions (except to WAITING)
+  if (STREET_ORDER[detectedStreet] <= STREET_ORDER[state.street]) {
+    return { ...state, heroTurn };
+  }
+
+  // Forward transition with hysteresis
+  if (state.pendingStreet === detectedStreet) {
+    const newCount = state.frameCount + 1;
+    if (newCount >= FORWARD_HYSTERESIS) {
+      // Transition confirmed
+      const snapshot: StreetSnapshot = {
+        street: detectedStreet,
+        heroCards: hero,
+        communityCards: community,
+        timestamp: Date.now(),
+      };
+      const handId =
+        detectedStreet === "PREFLOP" ? generateHandId() : state.handId;
+      const shouldAnalyze = heroTurn && !state.analyzing;
+      return {
+        ...state,
+        street: detectedStreet,
+        handId,
+        heroCards: hero,
+        communityCards: community,
+        heroTurn,
+        streets: [...state.streets, snapshot],
+        frameCount: 0,
+        pendingStreet: null,
+        shouldAnalyze,
+        analyzing: false,
+      };
+    }
+    return { ...state, frameCount: newCount, heroTurn };
+  }
+
+  // Start counting toward new street
+  return { ...state, pendingStreet: detectedStreet, frameCount: 1, heroTurn };
+}

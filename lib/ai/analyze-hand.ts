@@ -14,6 +14,7 @@ export function analyzeHand(
   imageBase64: string,
   opponentHistory?: Record<number, OpponentHistoryEntry>,
   detectedCards?: string,
+  handContext?: string,
 ) {
   const opponentContext = opponentHistory
     ? buildOpponentContext(opponentHistory)
@@ -26,6 +27,10 @@ export function analyzeHand(
     userText = `Analyze this poker hand and recommend the best action.\n\nDetected cards: ${detectedCards}`;
   } else {
     userText = "Analyze this poker hand screenshot and recommend the best action.";
+  }
+
+  if (handContext) {
+    userText += `\n\nHand history so far: ${handContext}`;
   }
 
   if (opponentContext) {
