@@ -7,14 +7,11 @@ export interface StreetSnapshot {
   street: Street;
   heroCards: CardCode[];
   communityCards: CardCode[];
-  timestamp: number;
 }
 
 export interface HandState {
   /** Current street in the hand. */
   street: Street;
-  /** Unique ID for the current hand (null when WAITING). */
-  handId: string | null;
   /** Detected hero cards (card codes). */
   heroCards: CardCode[];
   /** Detected community cards (card codes). */

@@ -3,8 +3,7 @@ const statusText = document.getElementById("status-text") as HTMLElement;
 const hotkeyEl = document.getElementById("hotkey") as HTMLElement;
 const toggleBtn = document.getElementById("toggle-btn") as HTMLButtonElement;
 
-const isMac = navigator.platform.toUpperCase().includes("MAC");
-hotkeyEl.textContent = isMac ? "Ctrl+Shift+P" : "Ctrl+Shift+P";
+hotkeyEl.textContent = "Ctrl+Shift+P";
 
 let continuousActive = false;
 

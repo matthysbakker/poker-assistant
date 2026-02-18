@@ -8,7 +8,6 @@ const WAITING_HYSTERESIS = 3;
 
 export const INITIAL_STATE: HandState = {
   street: "WAITING",
-  handId: null,
   heroCards: [],
   communityCards: [],
   heroTurn: false,
@@ -39,10 +38,6 @@ const STREET_ORDER: Record<Street, number> = {
   TURN: 3,
   RIVER: 4,
 };
-
-function generateHandId(): string {
-  return `hand-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-}
 
 /** Extract card codes from detection result. */
 function cardCodes(detection: DetectionResult): {
@@ -128,15 +123,11 @@ function handleDetection(
         street: detectedStreet,
         heroCards: hero,
         communityCards: community,
-        timestamp: Date.now(),
       };
-      const handId =
-        detectedStreet === "PREFLOP" ? generateHandId() : state.handId;
       const triggerAnalysis = heroTurn && !state.analyzing;
       return {
         ...state,
         street: detectedStreet,
-        handId,
         heroCards: hero,
         communityCards: community,
         heroTurn,
