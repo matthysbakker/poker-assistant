@@ -3,6 +3,12 @@ import { writeFile } from "fs/promises";
 import { join } from "path";
 import { analyzeHand } from "@/lib/ai/analyze-hand";
 import { detectCards } from "@/lib/card-detection";
+import type { DetectionResult } from "@/lib/card-detection/types";
+import {
+  buildDetectionDetails,
+  writeHandRecord,
+  type HandRecord,
+} from "@/lib/storage/hand-records";
 
 export const maxDuration = 30;
 
@@ -20,6 +26,7 @@ const requestSchema = z.object({
   image: z.string().min(1).max(10_000_000),
   opponentHistory: opponentHistorySchema.optional(),
   handContext: z.string().optional(),
+  captureMode: z.enum(["manual", "continuous"]).optional(),
 });
 
 export async function POST(req: Request) {
@@ -48,8 +55,9 @@ export async function POST(req: Request) {
 
   // Run deterministic card detection before Claude
   let detectedCards: string | undefined;
+  let detection: DetectionResult | null = null;
   try {
-    const detection = await detectCards(parsed.data.image);
+    detection = await detectCards(parsed.data.image);
     if (detection.detectedText) {
       detectedCards = detection.detectedText;
       console.log(`[card-detection] ${detection.detectedText} (${detection.timing}ms)`);
@@ -64,5 +72,39 @@ export async function POST(req: Request) {
     detectedCards,
     parsed.data.handContext,
   );
+
+  // Non-blocking: save hand record to disk when stream completes
+  if (process.env.SAVE_HANDS === "true") {
+    const imageBuffer = Buffer.from(parsed.data.image, "base64");
+    const handId = crypto.randomUUID();
+    const timestamp = new Date().toISOString();
+
+    result.object
+      .then(async (analysis) => {
+        if (!analysis.action) return;
+
+        const record: HandRecord = {
+          id: handId,
+          timestamp,
+          captureMode: parsed.data.captureMode ?? "manual",
+          screenshotFile: `${timestamp.slice(0, 10)}/${handId}.jpg`,
+          detectedText: detectedCards ?? null,
+          detectionDetails: buildDetectionDetails(detection),
+          handContext: parsed.data.handContext ?? null,
+          opponentHistory: parsed.data.opponentHistory ?? null,
+          systemPromptVariant: detectedCards
+            ? "with-detected-cards"
+            : "standard",
+          analysis,
+        };
+
+        await writeHandRecord(record, imageBuffer);
+        console.log(`[hands] Saved ${handId} (${record.captureMode})`);
+      })
+      .catch((err: unknown) => {
+        console.warn("[hands] Failed to save hand record:", err);
+      });
+  }
+
   return result.toTextStreamResponse();
 }

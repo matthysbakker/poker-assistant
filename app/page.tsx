@@ -187,6 +187,7 @@ export default function Home() {
           imageBase64={imageBase64}
           opponentHistory={opponentHistory}
           handContext={handContext}
+          captureMode={captureMode}
           onHandSaved={handleHandSaved}
           onOpponentsDetected={handleOpponentsDetected}
           onAnalysisComplete={markAnalysisComplete}

@@ -18,6 +18,7 @@ interface AnalysisResultProps {
     { username?: string; handsObserved: number; actions: string[]; inferredType: string }
   >;
   handContext?: string;
+  captureMode?: "manual" | "continuous";
   onHandSaved?: () => void;
   onOpponentsDetected?: (opponents: Opponent[]) => void;
   onAnalysisComplete?: () => void;
@@ -27,6 +28,7 @@ export function AnalysisResult({
   imageBase64,
   opponentHistory,
   handContext,
+  captureMode,
   onHandSaved,
   onOpponentsDetected,
   onAnalysisComplete,
@@ -43,7 +45,7 @@ export function AnalysisResult({
     if (imageBase64 && imageBase64 !== submittedRef.current) {
       submittedRef.current = imageBase64;
       savedRef.current = null;
-      submit({ image: imageBase64, opponentHistory, handContext });
+      submit({ image: imageBase64, opponentHistory, handContext, captureMode });
     }
   }, [imageBase64, submit, opponentHistory, handContext]);
 
