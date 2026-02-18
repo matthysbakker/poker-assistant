@@ -26,7 +26,7 @@ export default function Home() {
   const [handContext, setHandContext] = useState<string | undefined>();
 
   // Continuous capture: hand tracking + detection loop + analysis triggers
-  const { captureMode, setCaptureMode, handState, handleFrame, markAnalysisComplete, reset: resetCapture } =
+  const { captureMode, setCaptureMode, switchToManual, handState, handleFrame, markAnalysisComplete, reset: resetCapture } =
     useContinuousCapture({
       onAnalysisTrigger: (base64, context) => {
         setHandContext(context);
@@ -41,8 +41,8 @@ export default function Home() {
       if (event.data?.source !== "poker-assistant-ext") return;
 
       if (event.data.type === "CAPTURE" && event.data.base64) {
-        // Manual hotkey capture → immediate full analysis
-        setCaptureMode("manual");
+        // Manual hotkey capture → abort any in-flight detection, immediate analysis
+        switchToManual();
         setHandContext(undefined);
         setOpponentHistory(getOpponentContext());
         setImageBase64(event.data.base64);
@@ -58,7 +58,7 @@ export default function Home() {
     window.addEventListener("message", handleMessage);
     window.postMessage({ source: "poker-assistant-app", type: "PING" }, "*");
     return () => window.removeEventListener("message", handleMessage);
-  }, [setCaptureMode, handleFrame]);
+  }, [switchToManual, setCaptureMode, handleFrame]);
 
   const handleReset = useCallback(() => {
     setOpponentHistory(getOpponentContext());
