@@ -1,11 +1,12 @@
+import type { CardCode } from "@/lib/card-detection/types";
 import type { DetectionResult } from "@/lib/card-detection/types";
 
 export type Street = "WAITING" | "PREFLOP" | "FLOP" | "TURN" | "RIVER";
 
 export interface StreetSnapshot {
   street: Street;
-  heroCards: string[];
-  communityCards: string[];
+  heroCards: CardCode[];
+  communityCards: CardCode[];
   timestamp: number;
 }
 
@@ -15,9 +16,9 @@ export interface HandState {
   /** Unique ID for the current hand (null when WAITING). */
   handId: string | null;
   /** Detected hero cards (card codes). */
-  heroCards: string[];
+  heroCards: CardCode[];
   /** Detected community cards (card codes). */
-  communityCards: string[];
+  communityCards: CardCode[];
   /** Whether hero's action buttons are visible. */
   heroTurn: boolean;
   /** Accumulated snapshots per street for context. */
@@ -26,8 +27,8 @@ export interface HandState {
   frameCount: number;
   /** Pending detection that the hysteresis is waiting to confirm. */
   pendingStreet: Street | null;
-  /** Whether Claude analysis should be triggered. */
-  shouldAnalyze: boolean;
+  /** Incremented each time Claude analysis should be triggered. */
+  analyzeGeneration: number;
   /** Whether a Claude request is currently in flight. */
   analyzing: boolean;
 }

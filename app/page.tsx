@@ -24,8 +24,7 @@ export default function Home() {
     return getSession().handCount;
   });
 
-  const opponentHistoryRef = useRef(getOpponentContext());
-  const [opponentHistory, setOpponentHistory] = useState(opponentHistoryRef.current);
+  const [opponentHistory, setOpponentHistory] = useState(() => getOpponentContext());
   const [extensionConnected, setExtensionConnected] = useState(false);
 
   // Hand tracking for continuous mode
@@ -34,19 +33,59 @@ export default function Home() {
   const [handContext, setHandContext] = useState<string | undefined>();
   const detectingRef = useRef(false);
   const latestFrameRef = useRef<string | null>(null);
+  const lastAnalyzedGen = useRef(0);
 
-  // When hand state says we should analyze, promote the latest frame to state
+  // When analyzeGeneration increments, promote the latest frame to state
   // atomically with handContext so AnalysisResult gets both in the same render
   useEffect(() => {
-    if (handState.shouldAnalyze && handState.street !== "WAITING" && latestFrameRef.current) {
+    if (
+      handState.analyzeGeneration > lastAnalyzedGen.current &&
+      handState.street !== "WAITING" &&
+      latestFrameRef.current
+    ) {
+      lastAnalyzedGen.current = handState.analyzeGeneration;
       const context = buildHandContext(handState);
       setHandContext(context || undefined);
       setImageBase64(latestFrameRef.current);
       markAnalysisStarted();
-      opponentHistoryRef.current = getOpponentContext();
-      setOpponentHistory(opponentHistoryRef.current);
+      setOpponentHistory(getOpponentContext());
     }
-  }, [handState.shouldAnalyze, handState.street, markAnalysisStarted]);
+  }, [handState, markAnalysisStarted]);
+
+  const handleContinuousFrame = useCallback(
+    async (base64: string) => {
+      // Debounce: skip if a detection is already in flight
+      if (detectingRef.current) return;
+      detectingRef.current = true;
+
+      try {
+        const res = await fetch("/api/detect", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ image: base64 }),
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          // Validate shape before feeding to state machine
+          if (
+            data &&
+            Array.isArray(data.heroCards) &&
+            Array.isArray(data.communityCards) &&
+            typeof data.heroTurn === "boolean"
+          ) {
+            feedDetection(data as DetectionResult);
+            latestFrameRef.current = base64;
+          }
+        }
+      } catch {
+        // Network error — skip this frame
+      } finally {
+        detectingRef.current = false;
+      }
+    },
+    [feedDetection],
+  );
 
   // Listen for captures and connection status from the browser extension
   useEffect(() => {
@@ -57,8 +96,7 @@ export default function Home() {
         // Manual hotkey capture → immediate full analysis
         setCaptureMode("manual");
         setHandContext(undefined);
-        opponentHistoryRef.current = getOpponentContext();
-        setOpponentHistory(opponentHistoryRef.current);
+        setOpponentHistory(getOpponentContext());
         setImageBase64(event.data.base64);
       } else if (event.data.type === "FRAME" && event.data.base64) {
         // Continuous capture frame → feed to state machine
@@ -72,37 +110,10 @@ export default function Home() {
     window.addEventListener("message", handleMessage);
     window.postMessage({ source: "poker-assistant-app", type: "PING" }, "*");
     return () => window.removeEventListener("message", handleMessage);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  async function handleContinuousFrame(base64: string) {
-    // Debounce: skip if a detection is already in flight
-    if (detectingRef.current) return;
-    detectingRef.current = true;
-
-    try {
-      const res = await fetch("/api/detect", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ image: base64 }),
-      });
-
-      if (res.ok) {
-        const detection: DetectionResult = await res.json();
-        feedDetection(detection);
-        // Store frame in ref — only promoted to state when shouldAnalyze fires
-        latestFrameRef.current = base64;
-      }
-    } catch {
-      // Network error — skip this frame
-    } finally {
-      detectingRef.current = false;
-    }
-  }
+  }, [handleContinuousFrame]);
 
   const handleReset = useCallback(() => {
-    opponentHistoryRef.current = getOpponentContext();
-    setOpponentHistory(opponentHistoryRef.current);
+    setOpponentHistory(getOpponentContext());
     setImageBase64(null);
     setHandContext(undefined);
     latestFrameRef.current = null;
@@ -121,7 +132,6 @@ export default function Home() {
 
   const handleResetSession = useCallback(() => {
     resetSession();
-    opponentHistoryRef.current = undefined;
     setOpponentHistory(undefined);
     setSessionHandCount(0);
   }, []);

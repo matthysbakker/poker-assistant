@@ -17,13 +17,19 @@ const opponentHistorySchema = z.record(
 );
 
 const requestSchema = z.object({
-  image: z.string().min(1),
+  image: z.string().min(1).max(10_000_000),
   opponentHistory: opponentHistorySchema.optional(),
   handContext: z.string().optional(),
 });
 
 export async function POST(req: Request) {
-  const body = await req.json();
+  let body: unknown;
+  try {
+    body = await req.json();
+  } catch {
+    return Response.json({ error: "Invalid JSON body." }, { status: 400 });
+  }
+
   const parsed = requestSchema.safeParse(body);
 
   if (!parsed.success) {
