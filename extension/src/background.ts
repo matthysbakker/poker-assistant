@@ -31,27 +31,32 @@ function sendFrame(base64: string, type: "POKER_CAPTURE" | "CAPTURE_FRAME") {
 function startContinuousCapture() {
   if (captureInterval) return; // already running
 
-  // Record the current window as the poker window
+  // Record the current window as the poker window, then start interval
   chrome.windows.getCurrent((win) => {
     pokerWindowId = win?.id ?? null;
+    if (!pokerWindowId) {
+      console.error("[BG] No window found for continuous capture");
+      return;
+    }
+
     console.log("[BG] Continuous capture started, poker window:", pokerWindowId);
+
+    captureInterval = setInterval(() => {
+      if (!webAppTabId) return;
+
+      chrome.tabs.captureVisibleTab(
+        pokerWindowId!,
+        { format: "jpeg", quality: 85 },
+        (dataUrl) => {
+          if (chrome.runtime.lastError || !dataUrl) return;
+          const base64 = dataUrl.replace(/^data:image\/\w+;base64,/, "");
+          sendFrame(base64, "CAPTURE_FRAME");
+        },
+      );
+    }, 2000);
+
+    setBadge("ON", "#22c55e", 0); // persistent badge
   });
-
-  captureInterval = setInterval(() => {
-    if (!webAppTabId || !pokerWindowId) return;
-
-    chrome.tabs.captureVisibleTab(
-      pokerWindowId,
-      { format: "jpeg", quality: 85 },
-      (dataUrl) => {
-        if (chrome.runtime.lastError || !dataUrl) return;
-        const base64 = dataUrl.replace(/^data:image\/\w+;base64,/, "");
-        sendFrame(base64, "CAPTURE_FRAME");
-      },
-    );
-  }, 2000);
-
-  setBadge("ON", "#22c55e", 0); // persistent badge
 }
 
 function stopContinuousCapture() {

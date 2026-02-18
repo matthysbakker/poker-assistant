@@ -33,18 +33,20 @@ export default function Home() {
   const [captureMode, setCaptureMode] = useState<CaptureMode>("manual");
   const [handContext, setHandContext] = useState<string | undefined>();
   const detectingRef = useRef(false);
+  const latestFrameRef = useRef<string | null>(null);
 
-  // When hand state says we should analyze, trigger Claude
+  // When hand state says we should analyze, promote the latest frame to state
+  // atomically with handContext so AnalysisResult gets both in the same render
   useEffect(() => {
-    if (handState.shouldAnalyze && handState.street !== "WAITING" && imageBase64) {
+    if (handState.shouldAnalyze && handState.street !== "WAITING" && latestFrameRef.current) {
       const context = buildHandContext(handState);
       setHandContext(context || undefined);
+      setImageBase64(latestFrameRef.current);
       markAnalysisStarted();
-      // imageBase64 is already set from the latest frame — AnalysisResult will submit
       opponentHistoryRef.current = getOpponentContext();
       setOpponentHistory(opponentHistoryRef.current);
     }
-  }, [handState.shouldAnalyze, handState.street, imageBase64, markAnalysisStarted]);
+  }, [handState.shouldAnalyze, handState.street, markAnalysisStarted]);
 
   // Listen for captures and connection status from the browser extension
   useEffect(() => {
@@ -88,8 +90,8 @@ export default function Home() {
       if (res.ok) {
         const detection: DetectionResult = await res.json();
         feedDetection(detection);
-        // Keep the latest frame for when Claude analysis is triggered
-        setImageBase64(base64);
+        // Store frame in ref — only promoted to state when shouldAnalyze fires
+        latestFrameRef.current = base64;
       }
     } catch {
       // Network error — skip this frame
@@ -103,6 +105,7 @@ export default function Home() {
     setOpponentHistory(opponentHistoryRef.current);
     setImageBase64(null);
     setHandContext(undefined);
+    latestFrameRef.current = null;
     resetTracker();
     setCaptureMode("manual");
   }, [resetTracker]);
