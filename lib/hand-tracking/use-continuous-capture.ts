@@ -93,6 +93,7 @@ export function useContinuousCapture({ onAnalysisTrigger }: UseContinuousCapture
   const reset = useCallback(() => {
     abortDetection();
     latestFrameRef.current = null;
+    lastAnalyzedGen.current = 0;
     resetTracker();
     setCaptureMode("manual");
   }, [abortDetection, resetTracker]);

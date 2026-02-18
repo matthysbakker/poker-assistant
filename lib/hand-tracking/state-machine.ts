@@ -98,9 +98,10 @@ function handleDetection(
     if (state.pendingStreet === "WAITING") {
       const newCount = state.frameCount + 1;
       if (newCount >= threshold) {
-        // Hand ended — reset
+        // Hand ended — reset but preserve monotonic generation counter
         return {
           ...INITIAL_STATE,
+          analyzeGeneration: state.analyzeGeneration,
         };
       }
       return { ...state, frameCount: newCount, heroTurn };
