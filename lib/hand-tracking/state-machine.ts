@@ -4,7 +4,7 @@ import type { HandState, HandAction, Street, StreetSnapshot } from "./types";
 /** Frames required to confirm a forward street transition. */
 const FORWARD_HYSTERESIS = 2;
 /** Frames required to confirm transition to WAITING (hand ended). */
-const WAITING_HYSTERESIS = 3;
+const WAITING_HYSTERESIS = 2;
 
 export const INITIAL_STATE: HandState = {
   street: "WAITING",

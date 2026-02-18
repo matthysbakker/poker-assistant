@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useHandTracker, buildHandContext } from "./use-hand-tracker";
 import type { DetectionResult } from "@/lib/card-detection/types";
+import { resizeBase64Image } from "@/lib/utils/image";
 
 type CaptureMode = "manual" | "continuous";
 
@@ -64,7 +65,10 @@ export function useContinuousCapture({ onAnalysisTrigger }: UseContinuousCapture
             typeof data.heroTurn === "boolean"
           ) {
             feedDetection(data as DetectionResult);
-            latestFrameRef.current = base64;
+            // Resize for Claude Vision (1024px) — detection already ran on full-res
+            resizeBase64Image(base64).then((resized) => {
+              latestFrameRef.current = resized;
+            });
           }
         }
       } catch (e) {

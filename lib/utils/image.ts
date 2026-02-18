@@ -56,6 +56,42 @@ export function fileToBase64(file: File): Promise<string> {
   return blobToBase64(file);
 }
 
+const CONTINUOUS_MAX_DIMENSION = 1024;
+
+/**
+ * Resize a base64 image to a maximum dimension.
+ * Used for continuous capture frames which arrive as raw base64 (not File objects).
+ */
+export async function resizeBase64Image(
+  base64: string,
+  maxDimension = CONTINUOUS_MAX_DIMENSION,
+): Promise<string> {
+  const img = new Image();
+  img.src = `data:image/jpeg;base64,${base64}`;
+
+  await new Promise<void>((resolve, reject) => {
+    img.onload = () => resolve();
+    img.onerror = reject;
+  });
+
+  const { width, height } = img;
+
+  // Skip resize if already within bounds
+  if (width <= maxDimension && height <= maxDimension) return base64;
+
+  const scale = maxDimension / Math.max(width, height);
+  const targetWidth = Math.round(width * scale);
+  const targetHeight = Math.round(height * scale);
+
+  const canvas = document.createElement("canvas");
+  canvas.width = targetWidth;
+  canvas.height = targetHeight;
+  const ctx = canvas.getContext("2d")!;
+  ctx.drawImage(img, 0, 0, targetWidth, targetHeight);
+
+  return canvas.toDataURL("image/jpeg", JPEG_QUALITY).split(",")[1];
+}
+
 const THUMBNAIL_MAX_DIMENSION = 400;
 const THUMBNAIL_QUALITY = 0.6;
 

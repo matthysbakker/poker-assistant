@@ -91,7 +91,7 @@ function startContinuousCapture() {
           sendFrame(base64, "CAPTURE_FRAME");
         },
       );
-    }, 2000);
+    }, 1000);
 
     setBadge("ON", "#22c55e", 0); // persistent badge
   });
