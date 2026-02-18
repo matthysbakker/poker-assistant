@@ -28,9 +28,17 @@ window.addEventListener("message", (event) => {
 // Relay captures from background to page
 chrome.runtime.onMessage.addListener((message) => {
   console.log("[Content] From background:", message.type);
+
   if (message.type === "POKER_CAPTURE") {
+    // Manual hotkey capture → immediate analysis
     window.postMessage(
       { source: "poker-assistant-ext", type: "CAPTURE", base64: message.base64 },
+      "*"
+    );
+  } else if (message.type === "CAPTURE_FRAME") {
+    // Continuous capture frame → state machine processing
+    window.postMessage(
+      { source: "poker-assistant-ext", type: "FRAME", base64: message.base64 },
       "*"
     );
   }
