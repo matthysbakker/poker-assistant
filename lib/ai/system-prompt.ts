@@ -9,7 +9,9 @@ CRITICAL — Read the cards carefully before doing anything else:
 - HEART ♥: classic heart shape (red).
 - DIAMOND ♦: a rotated square / rhombus shape (red).
 - Both spades and clubs are BLACK — you MUST distinguish them by shape, not color.
-- Ranks: Don't confuse 6/9, 8/3, J/Q. Look at the letter or number in the corner of the card.
+- Ranks: Look at the letter or number in the TOP-LEFT corner of the card (it is always right-side up in this corner).
+- 6 vs 9: The round belly of a 6 is at the BOTTOM of the digit; the round belly of a 9 is at the TOP. If you see two cards that look similar, one is likely a 6 and the other a 9 — do NOT report both as 9 or both as 6.
+- Don't confuse 8/3 or J/Q — examine the actual shape carefully.
 - The hero's hole cards are typically at the bottom center of the screen, face up.
 - Community cards are in the center of the table.
 - If a card is ambiguous, state what you see and your best read.
@@ -71,6 +73,7 @@ When reading [unreadable] cards from the image:
 - HEART ♥: classic heart shape (red).
 - DIAMOND ♦: a rotated square / rhombus shape (red).
 - Both spades and clubs are BLACK — distinguish them by shape, not color.
+- 6 vs 9: The round belly of a 6 is at the BOTTOM of the digit; the round belly of a 9 is at the TOP. The rank in the top-left corner is always right-side up. If two cards look similar, one is likely a 6 and the other a 9 — do NOT report both as 9.
 
 POSITION — To determine hero's position:
 - Find the dealer button chip (marked "D" or "DEALER") on the table.

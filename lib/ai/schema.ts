@@ -46,7 +46,7 @@ export const handAnalysisSchema = z.object({
       "Only describe what you see for any cards marked [unreadable]. " +
       "If no detected cards were provided: describe exactly what you see on each card — " +
       "rank symbol/letter in the corner, SHAPE of the suit symbol. " +
-      "Note if a rank could be 6 or 9 (check orientation)."
+      "6 vs 9: the round belly of a 6 is at the BOTTOM, a 9 at the TOP. Do NOT default to 9 — check carefully."
     ),
   heroCards: z
     .string()
