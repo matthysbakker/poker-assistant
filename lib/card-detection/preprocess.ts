@@ -61,11 +61,13 @@ function tightBBox(
  */
 export async function preprocessCrop(cropPng: Buffer): Promise<Buffer | null> {
   // Step 1: Binarize at working size
+  // NOTE: no .normalise() — fixed threshold is more stable across
+  // slightly different crop alignments (normalise stretches per-crop
+  // brightness, amplifying tiny alignment shifts into binary differences).
   const { data, info } = await sharp(cropPng)
     .resize(WORK_W, WORK_H)
     .greyscale()
-    .normalise()
-    .threshold(128)
+    .threshold(180)
     .raw()
     .toBuffer({ resolveWithObject: true });
 

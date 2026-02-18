@@ -1,6 +1,6 @@
 import sharp from "sharp";
-import { getRegions } from "./regions";
-import { cropRegion, isEmptyRegion, matchCard } from "./match";
+import { locateCards } from "./locate";
+import { cropCorner, matchCard } from "./match";
 import { preprocessCrop } from "./preprocess";
 import type { CardMatch, DetectionResult } from "./types";
 
@@ -9,38 +9,29 @@ export async function detectCards(base64: string): Promise<DetectionResult> {
   const start = performance.now();
   const imageBuffer = Buffer.from(base64, "base64");
 
-  const metadata = await sharp(imageBuffer).metadata();
-  const width = metadata.width!;
-  const height = metadata.height!;
+  const isConfident = (m: CardMatch) =>
+    m.confidence === "HIGH" || m.confidence === "MEDIUM";
 
-  const { hero, community } = getRegions(width, height);
+  // Step 1: Locate cards dynamically
+  const cards = await locateCards(imageBuffer);
 
-  // Detect hero cards (always 2 positions)
+  // Step 2: For each located card, crop corner → preprocess → match
   const heroCards: CardMatch[] = [];
-  for (const region of hero) {
-    const cropPng = await cropRegion(imageBuffer, region);
-    if (await isEmptyRegion(cropPng)) continue;
-
-    const preprocessed = await preprocessCrop(cropPng);
-    if (!preprocessed) continue;
-
-    const match = matchCard(preprocessed, region.name, width);
-    heroCards.push(match);
-  }
-
-  // Detect community cards (up to 5 positions, skip empty slots)
   const communityCards: CardMatch[] = [];
-  for (const region of community) {
-    const cropPng = await cropRegion(imageBuffer, region);
-    if (await isEmptyRegion(cropPng)) continue;
 
-    const preprocessed = await preprocessCrop(cropPng);
+  for (const card of cards) {
+    const cornerCrop = await cropCorner(imageBuffer, card);
+    const preprocessed = await preprocessCrop(cornerCrop);
     if (!preprocessed) continue;
 
-    const match = matchCard(preprocessed, region.name, width);
-    // Skip LOW/NONE — likely empty positions with table graphics
-    if (match.confidence === "LOW" || match.confidence === "NONE") continue;
-    communityCards.push(match);
+    const match = matchCard(preprocessed, card.group, card.width);
+    if (!isConfident(match)) continue;
+
+    if (card.group === "hero") {
+      heroCards.push(match);
+    } else {
+      communityCards.push(match);
+    }
   }
 
   const timing = Math.round(performance.now() - start);

@@ -1,55 +1,53 @@
 import sharp from "sharp";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
-import type { CardCode, CardMatch, CardRegion } from "./types";
+import type { CardCode, CardGroup, CardMatch, LocatedCard } from "./types";
 import {
   preprocessCrop,
   compareBinary,
   OUTPUT_W,
   OUTPUT_H,
 } from "./preprocess";
+import { getResolutionBucket } from "./locate";
 
-const REFERENCES_DIR = join(process.cwd(), "data/card-references");
+const REFERENCES_DIR = join(process.cwd(), "data/card-references-v2");
 
 /**
- * Reference cache: imageWidth → slotName → cardCode → preprocessed buffer.
- * Populated lazily on first match for each width/slot combination.
+ * Reference cache: group → bucket → cardCode → preprocessed buffer variants.
+ * Each card can have multiple reference variants (from different board positions).
+ * Populated lazily on first match for each group/bucket combination.
  */
-const refCache = new Map<number, Map<string, Map<CardCode, Buffer>>>();
+const refCache = new Map<string, Map<CardCode, Buffer[]>>();
 
-/** Get the directory path for a specific slot's references. */
-function slotDir(imageWidth: number, slotName: string): string {
-  return join(REFERENCES_DIR, String(imageWidth), slotName);
+/** Cache key for a group + bucket. */
+function cacheKey(group: CardGroup, bucket: string): string {
+  return `${group}/${bucket}`;
 }
 
-/** Load preprocessed references for a specific slot. */
-function loadSlotRefs(
-  imageWidth: number,
-  slotName: string,
-): Map<CardCode, Buffer> {
-  // Check cache
-  let widthCache = refCache.get(imageWidth);
-  if (widthCache?.has(slotName)) return widthCache.get(slotName)!;
+/** Get the directory path for a specific group/bucket's references. */
+function refDir(group: CardGroup, bucket: string): string {
+  return join(REFERENCES_DIR, group, bucket);
+}
 
-  // Load from disk
-  const refs = new Map<CardCode, Buffer>();
-  const dir = slotDir(imageWidth, slotName);
+/** Load preprocessed references for a specific group and resolution bucket. */
+function loadRefs(group: CardGroup, bucket: string): Map<CardCode, Buffer[]> {
+  const key = cacheKey(group, bucket);
+  if (refCache.has(key)) return refCache.get(key)!;
+
+  const refs = new Map<CardCode, Buffer[]>();
+  const dir = refDir(group, bucket);
 
   if (existsSync(dir)) {
     const files = readdirSync(dir).filter((f) => f.endsWith(".bin"));
     for (const file of files) {
-      const card = file.replace(".bin", "") as CardCode;
-      refs.set(card, readFileSync(join(dir, file)));
+      // Files are named <card>_<idx>.bin (e.g. "Jc_0.bin", "10h_1.bin")
+      const card = file.replace(/_\d+\.bin$/, "") as CardCode;
+      if (!refs.has(card)) refs.set(card, []);
+      refs.get(card)!.push(readFileSync(join(dir, file)));
     }
   }
 
-  // Cache
-  if (!widthCache) {
-    widthCache = new Map();
-    refCache.set(imageWidth, widthCache);
-  }
-  widthCache.set(slotName, refs);
-
+  refCache.set(key, refs);
   return refs;
 }
 
@@ -58,56 +56,23 @@ export function clearReferenceCache() {
   refCache.clear();
 }
 
-/** Crop a region from an image and return as PNG buffer. */
-export async function cropRegion(
+/** Crop a card's corner from an image. */
+export async function cropCorner(
   imageBuffer: Buffer,
-  region: CardRegion,
+  card: LocatedCard,
 ): Promise<Buffer> {
   return sharp(imageBuffer)
     .extract({
-      left: region.left,
-      top: region.top,
-      width: region.width,
-      height: region.height,
+      left: card.corner.x,
+      top: card.corner.y,
+      width: card.corner.width,
+      height: card.corner.height,
     })
     .toBuffer();
 }
 
-/** Crop a region and save as PNG (for calibration/debugging). */
-export async function cropRegionToFile(
-  imageBuffer: Buffer,
-  region: CardRegion,
-  outputPath: string,
-): Promise<void> {
-  await sharp(imageBuffer)
-    .extract({
-      left: region.left,
-      top: region.top,
-      width: region.width,
-      height: region.height,
-    })
-    .toFile(outputPath);
-}
-
-/** Check if a cropped PNG region is empty (no card present). */
-export async function isEmptyRegion(cropPng: Buffer): Promise<boolean> {
-  const { data } = await sharp(cropPng)
-    .resize(20, 30) // Small size for fast brightness check
-    .removeAlpha()
-    .raw()
-    .toBuffer({ resolveWithObject: true });
-
-  let totalBrightness = 0;
-  const pixelCount = data.length / 3;
-  for (let i = 0; i < data.length; i += 3) {
-    totalBrightness += (data[i] + data[i + 1] + data[i + 2]) / 3;
-  }
-
-  return totalBrightness / pixelCount < 80;
-}
-
 /**
- * Match a preprocessed card crop against slot-specific references.
+ * Match a preprocessed card crop against group-based references.
  *
  * Confidence levels:
  *   HIGH:   match > 90% AND gap to second-best > 10%
@@ -117,14 +82,15 @@ export async function isEmptyRegion(cropPng: Buffer): Promise<boolean> {
  */
 export function matchCard(
   preprocessed: Buffer,
-  slotName: string,
-  imageWidth: number,
+  group: CardGroup,
+  cardWidth: number,
 ): CardMatch {
-  const refs = loadSlotRefs(imageWidth, slotName);
+  const bucket = getResolutionBucket(cardWidth);
+  const refs = loadRefs(group, bucket);
 
   if (refs.size === 0) {
     return {
-      region: slotName,
+      region: group,
       card: null,
       confidence: "NONE",
       matchScore: 0,
@@ -132,12 +98,23 @@ export function matchCard(
     };
   }
 
+  // Find best score per card (across all variants of that card)
+  const cardBestScores = new Map<CardCode, number>();
+  for (const [card, refBufs] of refs) {
+    let cardBest = 0;
+    for (const refBuf of refBufs) {
+      const score = compareBinary(preprocessed, refBuf);
+      if (score > cardBest) cardBest = score;
+    }
+    cardBestScores.set(card, cardBest);
+  }
+
+  // Find best and second-best cards (gap = distance between different cards)
   let bestCard: CardCode | null = null;
   let bestScore = 0;
   let secondBestScore = 0;
 
-  for (const [card, refBuf] of refs) {
-    const score = compareBinary(preprocessed, refBuf);
+  for (const [card, score] of cardBestScores) {
     if (score > bestScore) {
       secondBestScore = bestScore;
       bestScore = score;
@@ -161,7 +138,7 @@ export function matchCard(
   }
 
   return {
-    region: slotName,
+    region: group,
     card: confidence !== "NONE" ? bestCard : null,
     confidence,
     matchScore: Math.round(bestScore * 1000) / 1000,
@@ -170,24 +147,32 @@ export function matchCard(
 }
 
 /**
- * Save a preprocessed crop as a reference for a specific slot.
- * Called when Claude Vision identifies a card — auto-learn for future matching.
+ * Save a preprocessed crop as a reference variant for a specific group and resolution.
+ * Multiple variants per card are supported (from different board positions).
+ * Files are named <card>_<idx>.bin (e.g. "Jc_0.bin", "Jc_1.bin").
  */
 export function saveReference(
   preprocessed: Buffer,
-  slotName: string,
-  imageWidth: number,
+  group: CardGroup,
+  cardWidth: number,
   cardCode: CardCode,
 ): void {
-  const dir = slotDir(imageWidth, slotName);
+  const bucket = getResolutionBucket(cardWidth);
+  const dir = refDir(group, bucket);
   mkdirSync(dir, { recursive: true });
 
-  const filePath = join(dir, `${cardCode}.bin`);
+  // Find next available variant index for this card
+  const existing = readdirSync(dir).filter(
+    (f) => f.startsWith(`${cardCode}_`) && f.endsWith(".bin"),
+  );
+  const idx = existing.length;
+
+  const filePath = join(dir, `${cardCode}_${idx}.bin`);
   writeFileSync(filePath, preprocessed);
 
-  // Invalidate cache for this slot so it reloads on next match
-  const widthCache = refCache.get(imageWidth);
-  if (widthCache) widthCache.delete(slotName);
+  // Invalidate cache
+  const key = cacheKey(group, bucket);
+  refCache.delete(key);
 }
 
 export { preprocessCrop, OUTPUT_W, OUTPUT_H };

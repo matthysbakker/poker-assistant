@@ -1,3 +1,4 @@
 export { detectCards } from "./detect";
+export { locateCards, getResolutionBucket } from "./locate";
 export { clearReferenceCache, saveReference, preprocessCrop } from "./match";
-export type { CardCode, CardMatch, DetectionResult } from "./types";
+export type { CardCode, CardGroup, CardMatch, LocatedCard, DetectionResult } from "./types";

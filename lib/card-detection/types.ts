@@ -32,6 +32,20 @@ export interface CardMatch {
   gap: number;
 }
 
+export type CardGroup = "hero" | "community";
+
+export interface LocatedCard {
+  /** Which group this card belongs to. */
+  group: CardGroup;
+  /** Bounding box in original image coordinates. */
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  /** Card corner crop region (top-left portion for rank/suit identification). */
+  corner: { x: number; y: number; width: number; height: number };
+}
+
 export interface DetectionResult {
   heroCards: CardMatch[];
   communityCards: CardMatch[];
