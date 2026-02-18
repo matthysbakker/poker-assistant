@@ -86,6 +86,29 @@ const GROUND_TRUTH: Record<string, { hero: string[]; community: string[] }> = {
   "2026-02-18T15-59-35-269Z": { hero: ["10c", "As"], community: [] },
   "2026-02-18T16-00-18-105Z": { hero: ["6h", "9h"], community: [] },
   "2026-02-18T16-01-20-418Z": { hero: ["Qs", "4d"], community: [] },
+  // 2026-02-18 session — evening (3024x1674 captures)
+  "2026-02-18T20-59-05-858Z": { hero: ["Jh", "7h"], community: ["2d", "9c", "Kh"] },
+  "2026-02-18T20-59-42-676Z": { hero: ["2c", "4c"], community: [] },
+  "2026-02-18T21-02-22-794Z": { hero: ["6d", "4d"], community: [] },
+  "2026-02-18T21-05-35-707Z": { hero: ["Ah", "4h"], community: [] },
+  "2026-02-18T21-05-49-236Z": { hero: ["Ah", "4h"], community: ["3d", "Kh", "Qc"] },
+  "2026-02-18T21-09-46-179Z": { hero: ["Qc", "Kd"], community: [] },
+  "2026-02-18T21-10-51-658Z": { hero: ["6d", "9d"], community: [] },
+  "2026-02-18T21-12-43-998Z": { hero: ["8d", "7d"], community: [] },
+  "2026-02-18T21-15-49-607Z": { hero: ["Kc", "2c"], community: [] },
+  "2026-02-18T21-16-31-773Z": { hero: ["4s", "Jh"], community: [] },
+  "2026-02-18T21-17-12-546Z": { hero: ["5c", "6s"], community: [] },
+  "2026-02-18T21-19-11-614Z": { hero: ["2h", "As"], community: [] },
+  "2026-02-18T21-20-26-647Z": { hero: ["Kc", "6s"], community: [] },
+  "2026-02-18T21-20-38-483Z": { hero: ["Kc", "6s"], community: [] },
+  "2026-02-18T21-21-25-390Z": { hero: ["Kh", "4h"], community: [] },
+  "2026-02-18T21-21-49-743Z": { hero: ["Kh", "4h"], community: ["Kd", "Kc", "9c"] },
+  "2026-02-18T21-21-53-638Z": { hero: ["Kh", "4h"], community: ["Kd", "Kc", "9c", "4s"] },
+  "2026-02-18T21-25-21-930Z": { hero: ["Qh", "Ah"], community: [] },
+  "2026-02-18T21-25-42-106Z": { hero: ["Qh", "Ah"], community: [] },
+  "2026-02-18T21-25-43-633Z": { hero: ["Qh", "Ah"], community: [] },
+  "2026-02-18T21-26-15-151Z": { hero: ["Qh", "Ah"], community: [] },
+  "2026-02-18T21-26-43-523Z": { hero: ["Qh", "Ah"], community: [] },
 };
 
 const files = readdirSync(CAPTURES_DIR).filter((f) => f.endsWith(".png")).sort();
@@ -118,9 +141,9 @@ for (const file of files) {
         continue;
       }
 
-      saveReference(preprocessed, "hero", card.width, cardCode);
+      saveReference(preprocessed, "hero", cardCode);
       saved++;
-      console.log(`  hero/${cardCode} (w=${card.width}px) from ${ts}`);
+      console.log(`  hero/${cardCode} from ${ts}`);
     } catch (e: any) {
       console.log(`  ERROR hero ${cardCode}: ${e.message}`);
       errors++;
@@ -140,9 +163,9 @@ for (const file of files) {
         continue;
       }
 
-      saveReference(preprocessed, "community", card.width, cardCode);
+      saveReference(preprocessed, "community", cardCode);
       saved++;
-      console.log(`  community/${cardCode} (w=${card.width}px) from ${ts}`);
+      console.log(`  community/${cardCode} from ${ts}`);
     } catch (e: any) {
       console.log(`  ERROR community ${cardCode}: ${e.message}`);
       errors++;

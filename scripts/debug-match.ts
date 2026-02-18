@@ -3,7 +3,7 @@
  * Usage: bun run scripts/debug-match.ts <capture.png>
  */
 import { readFileSync } from "fs";
-import { locateCards, getResolutionBucket } from "../lib/card-detection/locate";
+import { locateCards } from "../lib/card-detection/locate";
 import { cropCorner, matchCard } from "../lib/card-detection/match";
 import { preprocessCrop, compareBinary, OUTPUT_W, OUTPUT_H } from "../lib/card-detection/preprocess";
 import sharp from "sharp";
@@ -26,9 +26,7 @@ console.log(`Located ${cards.length} cards:\n`);
 
 for (let i = 0; i < cards.length; i++) {
   const card = cards[i];
-  const bucket = getResolutionBucket(card.width);
-
-  console.log(`--- Card ${i} (${card.group}, w=${card.width}px → bucket="${bucket}") ---`);
+  console.log(`--- Card ${i} (${card.group}, w=${card.width}px) ---`);
   console.log(`    Corner: x=${card.corner.x} y=${card.corner.y} w=${card.corner.width} h=${card.corner.height}`);
 
   // Crop corner
@@ -51,11 +49,11 @@ for (let i = 0; i < cards.length; i++) {
     .toFile(`test/debug-match-preprocessed-${i}.png`);
 
   // Match result
-  const match = matchCard(preprocessed, card.group, card.width);
+  const match = matchCard(preprocessed, card.group);
   console.log(`    Match: ${match.card ?? "NONE"} (${match.confidence}, score=${(match.matchScore * 100).toFixed(1)}%, gap=${(match.gap * 100).toFixed(1)}%)`);
 
-  // Show top 5 scores against all refs in this bucket
-  const refDir = join(REFS_DIR, card.group, bucket);
+  // Show top 5 scores against all refs in this group
+  const refDir = join(REFS_DIR, card.group);
   const allScores: { card: string; variant: string; score: number }[] = [];
 
   try {
@@ -67,7 +65,7 @@ for (let i = 0; i < cards.length; i++) {
       allScores.push({ card: cardCode, variant: f, score });
     }
   } catch {
-    console.log(`    No refs in ${card.group}/${bucket}`);
+    console.log(`    No refs in ${card.group}`);
     continue;
   }
 

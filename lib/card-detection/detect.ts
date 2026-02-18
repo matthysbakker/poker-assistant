@@ -27,7 +27,7 @@ export async function detectCards(base64: string): Promise<DetectionResult> {
         const preprocessed = await preprocessCrop(cornerCrop);
         if (!preprocessed) return null;
 
-        const match = matchCard(preprocessed, card.group, card.width);
+        const match = matchCard(preprocessed, card.group);
         if (!isConfident(match)) return null;
 
         return { match, group: card.group };

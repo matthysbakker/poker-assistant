@@ -314,11 +314,3 @@ function addCard(
   });
 }
 
-/**
- * Get the resolution bucket for reference matching based on card pixel width.
- */
-export function getResolutionBucket(cardWidth: number): string {
-  if (cardWidth > 100) return "large";
-  if (cardWidth >= 60) return "medium";
-  return "small";
-}

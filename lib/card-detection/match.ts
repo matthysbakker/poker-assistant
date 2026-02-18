@@ -8,34 +8,27 @@ import {
   OUTPUT_W,
   OUTPUT_H,
 } from "./preprocess";
-import { getResolutionBucket } from "./locate";
 
 const REFERENCES_DIR = join(process.cwd(), "data/card-references-v2");
 
 /**
- * Reference cache: group → bucket → cardCode → preprocessed buffer variants.
+ * Reference cache: group → cardCode → preprocessed buffer variants.
  * Each card can have multiple reference variants (from different board positions).
- * Populated lazily on first match for each group/bucket combination.
+ * Populated lazily on first match for each group.
  */
 const refCache = new Map<string, Map<CardCode, Buffer[]>>();
 
-/** Cache key for a group + bucket. */
-function cacheKey(group: CardGroup, bucket: string): string {
-  return `${group}/${bucket}`;
+/** Get the directory path for a group's references. */
+function refDir(group: CardGroup): string {
+  return join(REFERENCES_DIR, group);
 }
 
-/** Get the directory path for a specific group/bucket's references. */
-function refDir(group: CardGroup, bucket: string): string {
-  return join(REFERENCES_DIR, group, bucket);
-}
-
-/** Load preprocessed references for a specific group and resolution bucket. */
-function loadRefs(group: CardGroup, bucket: string): Map<CardCode, Buffer[]> {
-  const key = cacheKey(group, bucket);
-  if (refCache.has(key)) return refCache.get(key)!;
+/** Load preprocessed references for a group. */
+function loadRefs(group: CardGroup): Map<CardCode, Buffer[]> {
+  if (refCache.has(group)) return refCache.get(group)!;
 
   const refs = new Map<CardCode, Buffer[]>();
-  const dir = refDir(group, bucket);
+  const dir = refDir(group);
 
   if (existsSync(dir)) {
     const files = readdirSync(dir).filter((f) => f.endsWith(".bin"));
@@ -47,7 +40,7 @@ function loadRefs(group: CardGroup, bucket: string): Map<CardCode, Buffer[]> {
     }
   }
 
-  refCache.set(key, refs);
+  refCache.set(group, refs);
   return refs;
 }
 
@@ -83,10 +76,8 @@ export async function cropCorner(
 export function matchCard(
   preprocessed: Buffer,
   group: CardGroup,
-  cardWidth: number,
 ): CardMatch {
-  const bucket = getResolutionBucket(cardWidth);
-  const refs = loadRefs(group, bucket);
+  const refs = loadRefs(group);
 
   if (refs.size === 0) {
     return {
@@ -154,11 +145,9 @@ export function matchCard(
 export function saveReference(
   preprocessed: Buffer,
   group: CardGroup,
-  cardWidth: number,
   cardCode: CardCode,
 ): void {
-  const bucket = getResolutionBucket(cardWidth);
-  const dir = refDir(group, bucket);
+  const dir = refDir(group);
   mkdirSync(dir, { recursive: true });
 
   // Find next available variant index for this card
@@ -171,8 +160,7 @@ export function saveReference(
   writeFileSync(filePath, preprocessed);
 
   // Invalidate cache
-  const key = cacheKey(group, bucket);
-  refCache.delete(key);
+  refCache.delete(group);
 }
 
 export { preprocessCrop, OUTPUT_W, OUTPUT_H };
