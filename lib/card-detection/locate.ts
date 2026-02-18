@@ -298,7 +298,11 @@ function addCard(
   const height = Math.round(ah * invScale);
 
   const cornerW = Math.round(width * CORNER_WIDTH_FRAC);
-  const cornerH = Math.round(height * CORNER_HEIGHT_FRAC);
+  // Derive corner height from card WIDTH (not blob height) for consistency.
+  // Blob height varies ±4px between sessions due to shadow/reflection detection,
+  // but width is stable. Use expected card aspect ratio to estimate true height.
+  const expectedHeight = Math.round(width / SINGLE_CARD_ASPECT);
+  const cornerH = Math.round(expectedHeight * CORNER_HEIGHT_FRAC);
 
   cards.push({
     group,

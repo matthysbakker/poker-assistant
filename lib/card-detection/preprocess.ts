@@ -9,13 +9,14 @@ export const OUTPUT_W = 32;
 export const OUTPUT_H = 48;
 
 /**
- * Find the tight bounding box of black pixels (value === 0) in a
- * single-channel binary buffer. Returns null if no black pixels found.
+ * Find the tight bounding box of dark pixels (value < threshold) in a
+ * single-channel greyscale buffer. Returns null if no dark pixels found.
  */
 function tightBBox(
   pixels: Buffer,
   width: number,
   height: number,
+  threshold: number = 128,
 ): { left: number; top: number; width: number; height: number } | null {
   let minX = width;
   let minY = height;
@@ -25,7 +26,7 @@ function tightBBox(
 
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
-      if (pixels[y * width + x] === 0) {
+      if (pixels[y * width + x] < threshold) {
         if (x < minX) minX = x;
         if (x > maxX) maxX = x;
         if (y < minY) minY = y;
@@ -53,30 +54,30 @@ function tightBBox(
 /**
  * Preprocess a card corner crop for template matching.
  *
- * Pipeline: resize → greyscale → normalise → threshold → tight bbox → resize
+ * Pipeline: resize → greyscale → find tight bbox → crop greyscale → resize
+ *
+ * Uses binary threshold only for finding the character bounding box.
+ * Stores greyscale values (not binary) for robust comparison.
  *
  * Input: PNG buffer of the raw card corner crop (any size).
- * Output: Raw single-channel binary buffer at OUTPUT_W × OUTPUT_H,
+ * Output: Raw single-channel greyscale buffer at OUTPUT_W × OUTPUT_H,
  *         or null if the crop has no meaningful content.
  */
 export async function preprocessCrop(cropPng: Buffer): Promise<Buffer | null> {
-  // Step 1: Binarize at working size
-  // NOTE: no .normalise() — fixed threshold is more stable across
-  // slightly different crop alignments (normalise stretches per-crop
-  // brightness, amplifying tiny alignment shifts into binary differences).
-  const { data, info } = await sharp(cropPng)
+  // Step 1: Resize to working size and get greyscale
+  const { data: greyData, info } = await sharp(cropPng)
     .resize(WORK_W, WORK_H)
     .greyscale()
-    .threshold(180)
     .raw()
     .toBuffer({ resolveWithObject: true });
 
-  // Step 2: Find tight bounding box of black pixels
-  const bbox = tightBBox(data, info.width, info.height);
+  // Step 2: Find tight bounding box of dark pixels (the character)
+  // Use threshold=180 to identify where the rank/suit text is
+  const bbox = tightBBox(greyData, info.width, info.height, 180);
   if (!bbox) return null;
 
-  // Step 3: Crop to tight bbox and resize to standard output size
-  const result = await sharp(data, {
+  // Step 3: Crop the GREYSCALE image to tight bbox and resize to output size
+  const result = await sharp(greyData, {
     raw: { width: info.width, height: info.height, channels: 1 },
   })
     .extract(bbox)
@@ -88,14 +89,14 @@ export async function preprocessCrop(cropPng: Buffer): Promise<Buffer | null> {
 }
 
 /**
- * Compare two preprocessed binary buffers.
- * Returns the fraction of matching pixels (0.0 to 1.0).
+ * Compare two preprocessed greyscale buffers.
+ * Returns a similarity score (0.0 to 1.0) based on pixel value closeness.
  */
 export function compareBinary(a: Buffer, b: Buffer): number {
-  let matching = 0;
+  let similarity = 0;
   const len = Math.min(a.length, b.length);
   for (let i = 0; i < len; i++) {
-    if (a[i] === b[i]) matching++;
+    similarity += 1 - Math.abs(a[i] - b[i]) / 255;
   }
-  return matching / len;
+  return similarity / len;
 }

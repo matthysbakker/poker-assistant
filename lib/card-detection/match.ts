@@ -74,9 +74,9 @@ export async function cropCorner(
 /**
  * Match a preprocessed card crop against group-based references.
  *
- * Confidence levels:
- *   HIGH:   match > 90% AND gap to second-best > 10%
- *   MEDIUM: match > 85% AND gap > 5%
+ * Confidence levels (tuned for greyscale comparison):
+ *   HIGH:   match > 90% AND gap to second-best > 7%
+ *   MEDIUM: match > 85% AND gap > 3%
  *   LOW:    match > 75% (possible match but uncertain)
  *   NONE:   no references or no match above threshold
  */
@@ -127,9 +127,9 @@ export function matchCard(
   const gap = bestScore - secondBestScore;
   let confidence: CardMatch["confidence"];
 
-  if (bestScore > 0.90 && gap > 0.10) {
+  if (bestScore > 0.90 && gap > 0.07) {
     confidence = "HIGH";
-  } else if (bestScore > 0.85 && gap > 0.05) {
+  } else if (bestScore > 0.85 && gap > 0.03) {
     confidence = "MEDIUM";
   } else if (bestScore > 0.75) {
     confidence = "LOW";

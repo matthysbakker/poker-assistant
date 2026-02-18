@@ -39,6 +39,29 @@ const GROUND_TRUTH: Record<string, { hero: string[]; community: string[] }> = {
   "2026-02-17T23-34-25-924Z": { hero: ["Ad", "9d"], community: [] },
   "2026-02-17T23-36-03-587Z": { hero: ["10s", "Qs"], community: [] },
   "2026-02-17T23-36-29-216Z": { hero: ["Ad", "10h"], community: [] },
+  // 2026-02-18 session — 1920x1057 captures
+  "2026-02-18T10-37-19-292Z": { hero: ["2d", "8h"], community: [] },
+  "2026-02-18T10-37-28-999Z": { hero: ["6d", "As"], community: [] },
+  "2026-02-18T10-38-07-553Z": { hero: ["Ad", "3s"], community: [] },
+  "2026-02-18T10-39-09-673Z": { hero: ["Ad", "3s"], community: ["3d", "5s", "3c", "Kd", "10h"] },
+  "2026-02-18T10-40-46-393Z": { hero: ["Kd", "7h"], community: [] },
+  "2026-02-18T10-41-50-700Z": { hero: ["10c", "7s"], community: [] },
+  "2026-02-18T10-42-29-143Z": { hero: ["Kc", "3d"], community: [] },
+  // 2026-02-18 session — 1920x1003 captures
+  "2026-02-18T10-43-46-462Z": { hero: ["4d", "9h"], community: [] },
+  "2026-02-18T10-44-19-671Z": { hero: ["Ah", "7c"], community: [] },
+  "2026-02-18T10-44-42-297Z": { hero: ["Ah", "7c"], community: ["5s", "6c", "9c", "3s"] },
+  "2026-02-18T10-45-07-857Z": { hero: ["Ah", "7c"], community: ["5s", "6c", "9c", "3s", "8h"] },
+  "2026-02-18T10-45-53-473Z": { hero: ["4c", "6d"], community: [] },
+  "2026-02-18T10-46-34-098Z": { hero: ["10h", "6d"], community: [] },
+  "2026-02-18T10-48-10-309Z": { hero: ["6s", "Js"], community: [] },
+  "2026-02-18T10-48-45-232Z": { hero: ["6s", "Js"], community: ["Qs", "Jc", "7d"] },
+  "2026-02-18T10-49-35-186Z": { hero: ["4d", "7s"], community: [] },
+  "2026-02-18T10-49-46-086Z": { hero: ["Kh", "2c"], community: [] },
+  "2026-02-18T10-50-08-775Z": { hero: ["Qh", "Kh"], community: [] },
+  "2026-02-18T10-50-50-026Z": { hero: ["Qh", "Kh"], community: ["4h", "2c", "3c", "3d", "5s"] },
+  "2026-02-18T10-51-06-252Z": { hero: ["6d", "Kc"], community: [] },
+  "2026-02-18T10-51-40-478Z": { hero: ["7d", "9c"], community: [] },
 };
 
 const files = readdirSync(CAPTURES_DIR).filter((f) => f.endsWith(".png")).sort();
