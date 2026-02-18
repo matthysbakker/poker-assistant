@@ -129,7 +129,7 @@ export function matchCard(
 
   if (bestScore > 0.90 && gap > 0.07) {
     confidence = "HIGH";
-  } else if (bestScore > 0.85 && gap > 0.03) {
+  } else if (bestScore > 0.85 && gap > 0.02) {
     confidence = "MEDIUM";
   } else if (bestScore > 0.75) {
     confidence = "LOW";
