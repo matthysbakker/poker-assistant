@@ -10,6 +10,8 @@ import { createThumbnail } from "@/lib/utils/image";
 import { saveHand } from "@/lib/storage/hands";
 import { LoadingState } from "./LoadingState";
 import { OpponentTable } from "./OpponentTable";
+import { PersonaComparison } from "./PersonaComparison";
+import type { ChartPosition } from "@/lib/poker/personas";
 
 interface AnalysisResultProps {
   imageBase64: string | null;
@@ -47,7 +49,7 @@ export function AnalysisResult({
       savedRef.current = null;
       submit({ image: imageBase64, opponentHistory, handContext, captureMode });
     }
-  }, [imageBase64, submit, opponentHistory, handContext]);
+  }, [imageBase64, submit, opponentHistory, handContext, captureMode]);
 
   // Auto-save and update session when streaming completes
   useEffect(() => {
@@ -166,6 +168,15 @@ export function AnalysisResult({
             </div>
           )}
         </div>
+      )}
+
+      {/* Persona comparison — preflop only */}
+      {object.street === "PREFLOP" && object.heroCards && object.heroPosition && (
+        <PersonaComparison
+          heroCards={object.heroCards}
+          heroPosition={object.heroPosition as ChartPosition}
+          aiAction={object.action}
+        />
       )}
 
       {/* Opponents */}

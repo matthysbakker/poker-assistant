@@ -76,6 +76,6 @@ export async function writeHandRecord(
 
   await Promise.all([
     writeFile(join(dir, `${record.id}.json`), JSON.stringify(record, null, 2)),
-    writeFile(join(dir, `${record.id}.jpg`), imageBuffer),
+    writeFile(join(dir, `${record.id}.png`), imageBuffer),
   ]);
 }

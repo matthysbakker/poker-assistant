@@ -87,7 +87,7 @@ export async function POST(req: Request) {
           id: handId,
           timestamp,
           captureMode: parsed.data.captureMode ?? "manual",
-          screenshotFile: `${timestamp.slice(0, 10)}/${handId}.jpg`,
+          screenshotFile: `${timestamp.slice(0, 10)}/${handId}.png`,
           detectedText: detectedCards ?? null,
           detectionDetails: buildDetectionDetails(detection),
           handContext: parsed.data.handContext ?? null,

@@ -1,0 +1,118 @@
+/**
+ * Ground truth labels for card detection testing.
+ *
+ * 85 of 98 captures labeled. Unlabeled (13):
+ * - Hero folded / transitional: 15-43-57, 15-53-13, 15-59-13, 15-59-30,
+ *   16-01-41, 10-47-29, 20-58-23, 20-58-39, 21-00-31, 21-03-54, 21-05-02,
+ *   21-05-10
+ * - Hero cards hidden: 21-12-43 (different zoom level - labeled by user)
+ *
+ * Evening session note: detection consistently misidentifies hero cards
+ * (e.g., finds "Jd" when actual is Jh, Ah, Qc, Kc, etc.). Likely a
+ * reference coverage issue at the smaller card size.
+ */
+
+export const GROUND_TRUTH: Record<
+  string,
+  { hero: string[]; community: string[] }
+> = {
+  // === Session 1: Feb 17 morning ===
+  "2026-02-17T13-37-28-840Z": { hero: ["Kc", "Jd"], community: [] },
+  "2026-02-17T13-37-56-433Z": { hero: ["Kc", "Jd"], community: ["Ah", "4h", "Jc"] },
+  "2026-02-17T13-38-53-206Z": { hero: ["8c", "Qc"], community: [] },
+  "2026-02-17T13-39-01-369Z": { hero: ["8c", "Qc"], community: [] },
+  "2026-02-17T13-39-46-183Z": { hero: ["8c", "Qc"], community: ["Jc", "5c", "2s", "3d"] },
+  "2026-02-17T13-40-46-504Z": { hero: ["Qh", "10h"], community: [] },
+  "2026-02-17T13-41-08-096Z": { hero: ["Qh", "10h"], community: ["Kc", "4h", "9h"] },
+  "2026-02-17T13-41-25-899Z": { hero: ["Qh", "10h"], community: ["Kc", "4h", "9h", "Qs"] },
+  "2026-02-17T13-44-37-752Z": { hero: ["Qd", "Qs"], community: [] },
+
+  // === Session 2: Feb 17 afternoon ===
+  "2026-02-17T14-25-45-727Z": { hero: ["3d", "5c"], community: [] },
+  "2026-02-17T14-26-05-475Z": { hero: ["Ah", "Jd"], community: [] },
+  "2026-02-17T14-26-56-012Z": { hero: ["Ah", "Jd"], community: ["Qc", "10h", "5h"] },
+  "2026-02-17T14-27-22-803Z": { hero: ["Ah", "Jd"], community: ["Qc", "10h", "5h", "Kh"] },
+  "2026-02-17T14-28-23-356Z": { hero: ["4s", "3s"], community: [] },
+  "2026-02-17T14-31-56-491Z": { hero: ["4c", "7h"], community: [] },
+  "2026-02-17T14-35-15-232Z": { hero: ["Kh", "6h"], community: ["2c", "4d", "3s", "9d"] },
+  "2026-02-17T14-36-28-902Z": { hero: ["Ks", "Kd"], community: [] },
+
+  // === Session 3: Feb 17 evening ===
+  "2026-02-17T22-03-53-545Z": { hero: ["Qc", "3c"], community: [] },
+
+  // === Session 4: Feb 17 late night ===
+  "2026-02-17T23-34-25-924Z": { hero: ["Ad", "9d"], community: [] },
+  "2026-02-17T23-36-03-587Z": { hero: ["10s", "Qs"], community: [] },
+  "2026-02-17T23-36-29-216Z": { hero: ["Ad", "10h"], community: [] },
+
+  // === Session 5: Feb 18 morning ===
+  "2026-02-18T10-37-19-292Z": { hero: ["2d", "8h"], community: [] },
+  "2026-02-18T10-37-28-999Z": { hero: ["6d", "As"], community: [] },
+  "2026-02-18T10-37-57-625Z": { hero: ["6d", "As"], community: ["Jh", "Qd", "4s"] },
+  "2026-02-18T10-38-07-553Z": { hero: ["Ad", "3s"], community: [] },
+  "2026-02-18T10-39-09-673Z": { hero: ["Ad", "3s"], community: ["3d", "5s", "3c", "Kd", "10h"] },
+  "2026-02-18T10-40-46-393Z": { hero: ["Kd", "7h"], community: [] },
+  "2026-02-18T10-41-50-700Z": { hero: ["10c", "7s"], community: [] },
+  "2026-02-18T10-42-29-143Z": { hero: ["Kc", "3d"], community: [] },
+  "2026-02-18T10-43-46-462Z": { hero: ["4d", "9h"], community: [] },
+  "2026-02-18T10-43-49-827Z": { hero: ["4d", "9h"], community: [] },
+  "2026-02-18T10-44-19-671Z": { hero: ["Ah", "7c"], community: [] },
+  "2026-02-18T10-44-42-297Z": { hero: ["Ah", "7c"], community: ["5s", "6c", "9c", "3s"] },
+  "2026-02-18T10-45-07-857Z": { hero: ["Ah", "7c"], community: ["5s", "6c", "9c", "3s", "8h"] },
+  "2026-02-18T10-45-53-473Z": { hero: ["4c", "6d"], community: [] },
+  "2026-02-18T10-46-34-098Z": { hero: ["10h", "6d"], community: [] },
+  "2026-02-18T10-47-01-507Z": { hero: ["10h", "6d"], community: ["Kd", "2d"] },
+  "2026-02-18T10-48-10-309Z": { hero: ["6s", "Js"], community: [] },
+  "2026-02-18T10-48-45-232Z": { hero: ["6s", "Js"], community: ["Qs", "Jc", "7d"] },
+  "2026-02-18T10-49-12-759Z": { hero: ["6s", "Js"], community: ["Qs", "Jc", "7d"] },
+  "2026-02-18T10-49-35-186Z": { hero: ["4d", "7s"], community: [] },
+  "2026-02-18T10-49-46-086Z": { hero: ["Kh", "2c"], community: [] },
+  "2026-02-18T10-50-08-775Z": { hero: ["Qh", "Kh"], community: [] },
+  "2026-02-18T10-50-50-026Z": { hero: ["Qh", "Kh"], community: ["4h", "2c", "3c", "3d", "5s"] },
+  "2026-02-18T10-51-06-252Z": { hero: ["6d", "Kc"], community: [] },
+  "2026-02-18T10-51-40-478Z": { hero: ["7d", "9c"], community: [] },
+
+  // === Session 6: Feb 18 afternoon ===
+  "2026-02-18T15-44-06-337Z": { hero: ["6h", "9d"], community: [] },
+  "2026-02-18T15-45-06-776Z": { hero: ["Kc", "6s"], community: [] },
+  "2026-02-18T15-45-48-695Z": { hero: ["2c", "Qs"], community: [] },
+  "2026-02-18T15-46-34-073Z": { hero: ["Ks", "Jd"], community: ["Js", "Qs", "Qc"] },
+  "2026-02-18T15-47-00-184Z": { hero: ["Jc", "6s"], community: [] },
+  "2026-02-18T15-48-01-165Z": { hero: ["8s", "6s"], community: ["7h", "Ks", "4d"] },
+  "2026-02-18T15-48-16-604Z": { hero: ["7h", "Ks"], community: [] },
+  "2026-02-18T15-48-55-787Z": { hero: ["6h", "9s"], community: [] },
+  "2026-02-18T15-51-32-786Z": { hero: ["3c", "4d"], community: [] },
+  "2026-02-18T15-52-05-025Z": { hero: ["Ah", "5c"], community: [] },
+  "2026-02-18T15-52-23-263Z": { hero: ["Ah", "5c"], community: ["Kh", "2s", "4h"] },
+  "2026-02-18T15-53-18-699Z": { hero: ["Kd", "4d"], community: [] },
+  "2026-02-18T15-54-01-221Z": { hero: ["Kd", "4d"], community: [] },
+  "2026-02-18T15-57-08-263Z": { hero: ["Jd", "Kd"], community: ["5h", "6d", "3c"] },
+  "2026-02-18T15-58-57-934Z": { hero: ["Jd", "5s"], community: [] },
+  "2026-02-18T15-59-35-269Z": { hero: ["10c", "As"], community: [] },
+  "2026-02-18T16-00-18-105Z": { hero: ["6h", "9h"], community: [] },
+  "2026-02-18T16-01-20-418Z": { hero: ["Qs", "4d"], community: [] },
+
+  // === Session 7: Feb 18 evening (smaller cards, different resolution) ===
+  "2026-02-18T20-59-05-858Z": { hero: ["Jh", "7h"], community: ["2d", "9c", "Kh"] },
+  "2026-02-18T20-59-42-676Z": { hero: ["2c", "4c"], community: [] },
+  "2026-02-18T21-02-22-794Z": { hero: ["6d", "4d"], community: [] },
+  "2026-02-18T21-05-35-707Z": { hero: ["Ah", "4h"], community: [] },
+  "2026-02-18T21-05-49-236Z": { hero: ["Ah", "4h"], community: ["3d", "Kh", "Qc"] },
+  "2026-02-18T21-09-46-179Z": { hero: ["Qc", "Kd"], community: [] },
+  "2026-02-18T21-10-51-658Z": { hero: ["6d", "9d"], community: [] },
+  "2026-02-18T21-12-43-998Z": { hero: ["8d", "7d"], community: [] },
+  "2026-02-18T21-15-49-607Z": { hero: ["Kc", "2c"], community: [] },
+  "2026-02-18T21-16-31-773Z": { hero: ["4s", "Jh"], community: [] },
+  "2026-02-18T21-17-12-546Z": { hero: ["5c", "6s"], community: [] },
+  "2026-02-18T21-19-11-614Z": { hero: ["2h", "As"], community: [] },
+  "2026-02-18T21-20-26-647Z": { hero: ["Kc", "6s"], community: [] },
+  "2026-02-18T21-20-38-483Z": { hero: ["Kc", "6s"], community: [] },
+  "2026-02-18T21-21-25-390Z": { hero: ["Kh", "4h"], community: [] },
+  "2026-02-18T21-21-49-743Z": { hero: ["Kh", "4h"], community: ["Kd", "Kc", "9c"] },
+  "2026-02-18T21-21-53-638Z": { hero: ["Kh", "4h"], community: ["Kd", "Kc", "9c", "4s"] },
+  "2026-02-18T21-25-21-930Z": { hero: ["Qh", "Ah"], community: [] },
+  "2026-02-18T21-25-42-106Z": { hero: ["Qh", "Ah"], community: [] },
+  "2026-02-18T21-25-43-633Z": { hero: ["Qh", "Ah"], community: [] },
+  "2026-02-18T21-26-15-151Z": { hero: ["Qh", "Ah"], community: [] },
+  "2026-02-18T21-26-43-523Z": { hero: ["Qh", "Ah"], community: [] },
+};
