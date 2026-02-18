@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { PasteZone } from "@/components/analyzer/PasteZone";
 import { AnalysisResult } from "@/components/analyzer/AnalysisResult";
 import { HandHistory } from "@/components/history/HandHistory";
@@ -11,10 +11,7 @@ import {
   resetSession,
   updateOpponentProfiles,
 } from "@/lib/storage/sessions";
-import { useHandTracker, buildHandContext } from "@/lib/hand-tracking";
-import type { DetectionResult } from "@/lib/card-detection/types";
-
-type CaptureMode = "manual" | "continuous";
+import { useContinuousCapture } from "@/lib/hand-tracking";
 
 export default function Home() {
   const [imageBase64, setImageBase64] = useState<string | null>(null);
@@ -24,91 +21,52 @@ export default function Home() {
     return getSession().handCount;
   });
 
-  const opponentHistoryRef = useRef(getOpponentContext());
-  const [opponentHistory, setOpponentHistory] = useState(opponentHistoryRef.current);
+  const [opponentHistory, setOpponentHistory] = useState(() => getOpponentContext());
   const [extensionConnected, setExtensionConnected] = useState(false);
-
-  // Hand tracking for continuous mode
-  const { state: handState, feedDetection, markAnalysisStarted, markAnalysisComplete, reset: resetTracker } = useHandTracker();
-  const [captureMode, setCaptureMode] = useState<CaptureMode>("manual");
   const [handContext, setHandContext] = useState<string | undefined>();
-  const detectingRef = useRef(false);
-  const latestFrameRef = useRef<string | null>(null);
 
-  // When hand state says we should analyze, promote the latest frame to state
-  // atomically with handContext so AnalysisResult gets both in the same render
-  useEffect(() => {
-    if (handState.shouldAnalyze && handState.street !== "WAITING" && latestFrameRef.current) {
-      const context = buildHandContext(handState);
-      setHandContext(context || undefined);
-      setImageBase64(latestFrameRef.current);
-      markAnalysisStarted();
-      opponentHistoryRef.current = getOpponentContext();
-      setOpponentHistory(opponentHistoryRef.current);
-    }
-  }, [handState.shouldAnalyze, handState.street, markAnalysisStarted]);
+  // Continuous capture: hand tracking + detection loop + analysis triggers
+  const { captureMode, setCaptureMode, switchToManual, handState, handleFrame, markAnalysisComplete, reset: resetCapture } =
+    useContinuousCapture({
+      onAnalysisTrigger: (base64, context) => {
+        setHandContext(context);
+        setImageBase64(base64);
+        setOpponentHistory(getOpponentContext());
+      },
+    });
 
   // Listen for captures and connection status from the browser extension
   useEffect(() => {
     function handleMessage(event: MessageEvent) {
+      if (event.origin !== window.location.origin) return;
       if (event.data?.source !== "poker-assistant-ext") return;
 
       if (event.data.type === "CAPTURE" && event.data.base64) {
-        // Manual hotkey capture → immediate full analysis
-        setCaptureMode("manual");
+        // Manual hotkey capture → abort any in-flight detection, immediate analysis
+        switchToManual();
         setHandContext(undefined);
-        opponentHistoryRef.current = getOpponentContext();
-        setOpponentHistory(opponentHistoryRef.current);
+        setOpponentHistory(getOpponentContext());
         setImageBase64(event.data.base64);
       } else if (event.data.type === "FRAME" && event.data.base64) {
         // Continuous capture frame → feed to state machine
         setCaptureMode("continuous");
-        handleContinuousFrame(event.data.base64);
+        handleFrame(event.data.base64);
       } else if (event.data.type === "EXTENSION_CONNECTED") {
         setExtensionConnected(true);
       }
     }
 
     window.addEventListener("message", handleMessage);
-    window.postMessage({ source: "poker-assistant-app", type: "PING" }, "*");
+    window.postMessage({ source: "poker-assistant-app", type: "PING" }, window.location.origin);
     return () => window.removeEventListener("message", handleMessage);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  async function handleContinuousFrame(base64: string) {
-    // Debounce: skip if a detection is already in flight
-    if (detectingRef.current) return;
-    detectingRef.current = true;
-
-    try {
-      const res = await fetch("/api/detect", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ image: base64 }),
-      });
-
-      if (res.ok) {
-        const detection: DetectionResult = await res.json();
-        feedDetection(detection);
-        // Store frame in ref — only promoted to state when shouldAnalyze fires
-        latestFrameRef.current = base64;
-      }
-    } catch {
-      // Network error — skip this frame
-    } finally {
-      detectingRef.current = false;
-    }
-  }
+  }, [switchToManual, setCaptureMode, handleFrame]);
 
   const handleReset = useCallback(() => {
-    opponentHistoryRef.current = getOpponentContext();
-    setOpponentHistory(opponentHistoryRef.current);
+    setOpponentHistory(getOpponentContext());
     setImageBase64(null);
     setHandContext(undefined);
-    latestFrameRef.current = null;
-    resetTracker();
-    setCaptureMode("manual");
-  }, [resetTracker]);
+    resetCapture();
+  }, [resetCapture]);
 
   const handleHandSaved = useCallback(() => {
     setRefreshKey((k) => k + 1);
@@ -121,14 +79,9 @@ export default function Home() {
 
   const handleResetSession = useCallback(() => {
     resetSession();
-    opponentHistoryRef.current = undefined;
     setOpponentHistory(undefined);
     setSessionHandCount(0);
   }, []);
-
-  const handleAnalysisComplete = useCallback(() => {
-    markAnalysisComplete();
-  }, [markAnalysisComplete]);
 
   const isContinuous = captureMode === "continuous";
   const showStreetBadge = isContinuous && handState.street !== "WAITING";
@@ -236,7 +189,7 @@ export default function Home() {
           handContext={handContext}
           onHandSaved={handleHandSaved}
           onOpponentsDetected={handleOpponentsDetected}
-          onAnalysisComplete={handleAnalysisComplete}
+          onAnalysisComplete={markAnalysisComplete}
         />
 
         {/* Reset button */}

@@ -1,3 +1,5 @@
+// Extension message protocol — see background.ts for full type reference
+
 console.log("[Content] Loaded on", window.location.href);
 
 // Register with background
@@ -15,13 +17,13 @@ window.addEventListener("beforeunload", () => {
 });
 
 // Tell the page we're here
-window.postMessage({ source: "poker-assistant-ext", type: "EXTENSION_CONNECTED" }, "*");
+window.postMessage({ source: "poker-assistant-ext", type: "EXTENSION_CONNECTED" }, window.location.origin);
 
 // Respond to pings
 window.addEventListener("message", (event) => {
   if (event.data?.source === "poker-assistant-app" && event.data.type === "PING") {
     console.log("[Content] Got PING, responding");
-    window.postMessage({ source: "poker-assistant-ext", type: "EXTENSION_CONNECTED" }, "*");
+    window.postMessage({ source: "poker-assistant-ext", type: "EXTENSION_CONNECTED" }, window.location.origin);
   }
 });
 

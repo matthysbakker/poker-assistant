@@ -1,3 +1,26 @@
+/**
+ * Extension message protocol (cross-reference: content.ts, popup.ts, app/page.tsx)
+ *
+ * Background ↔ Content (chrome.runtime messages):
+ *   REGISTER_WEB_APP    content → bg     Tab registers as the web app
+ *   UNREGISTER_WEB_APP  content → bg     Tab unregisters on unload
+ *   POKER_CAPTURE       bg → content     Manual hotkey screenshot (PNG)
+ *   CAPTURE_FRAME       bg → content     Continuous capture frame (JPEG 85%)
+ *
+ * Background ↔ Popup (chrome.runtime messages):
+ *   GET_STATUS          popup → bg       Query connection + continuous state
+ *   CONTINUOUS_START    popup → bg       Start continuous capture
+ *   CONTINUOUS_STOP     popup → bg       Stop continuous capture
+ *
+ * Content ↔ Page (window.postMessage, source: "poker-assistant-ext"):
+ *   EXTENSION_CONNECTED content → page   Extension presence announcement
+ *   CAPTURE             content → page   Manual capture for analysis
+ *   FRAME               content → page   Continuous capture frame for detection
+ *
+ * Page → Content (window.postMessage, source: "poker-assistant-app"):
+ *   PING                page → content   Request EXTENSION_CONNECTED reply
+ */
+
 let webAppTabId: number | null = null;
 let lastCaptureTime = 0;
 const DEBOUNCE_MS = 3000;
@@ -8,11 +31,26 @@ let pokerWindowId: number | null = null;
 
 console.log("[BG] Background script started");
 
+let badgeTimeoutId: ReturnType<typeof setTimeout> | null = null;
+
 function setBadge(text: string, color: string, timeout = 3000) {
+  if (badgeTimeoutId) {
+    clearTimeout(badgeTimeoutId);
+    badgeTimeoutId = null;
+  }
   chrome.browserAction.setBadgeText({ text });
   chrome.browserAction.setBadgeBackgroundColor({ color });
   if (timeout > 0) {
-    setTimeout(() => chrome.browserAction.setBadgeText({ text: "" }), timeout);
+    badgeTimeoutId = setTimeout(() => {
+      badgeTimeoutId = null;
+      // Restore "ON" badge if continuous capture is still running
+      if (isContinuousActive()) {
+        chrome.browserAction.setBadgeText({ text: "ON" });
+        chrome.browserAction.setBadgeBackgroundColor({ color: "#22c55e" });
+      } else {
+        chrome.browserAction.setBadgeText({ text: "" });
+      }
+    }, timeout);
   }
 }
 

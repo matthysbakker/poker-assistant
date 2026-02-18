@@ -1,4 +1,4 @@
-import type { DetectionResult } from "@/lib/card-detection/types";
+import type { CardCode, DetectionResult } from "@/lib/card-detection/types";
 import type { HandState, HandAction, Street, StreetSnapshot } from "./types";
 
 /** Frames required to confirm a forward street transition. */
@@ -8,14 +8,13 @@ const WAITING_HYSTERESIS = 3;
 
 export const INITIAL_STATE: HandState = {
   street: "WAITING",
-  handId: null,
   heroCards: [],
   communityCards: [],
   heroTurn: false,
   streets: [],
   frameCount: 0,
   pendingStreet: null,
-  shouldAnalyze: false,
+  analyzeGeneration: 0,
   analyzing: false,
 };
 
@@ -40,22 +39,14 @@ const STREET_ORDER: Record<Street, number> = {
   RIVER: 4,
 };
 
-function generateHandId(): string {
-  return `hand-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-}
-
 /** Extract card codes from detection result. */
 function cardCodes(detection: DetectionResult): {
-  hero: string[];
-  community: string[];
+  hero: CardCode[];
+  community: CardCode[];
 } {
   return {
-    hero: detection.heroCards
-      .filter((m) => m.card !== null)
-      .map((m) => m.card!),
-    community: detection.communityCards
-      .filter((m) => m.card !== null)
-      .map((m) => m.card!),
+    hero: detection.heroCards.flatMap((m) => (m.card ? [m.card] : [])),
+    community: detection.communityCards.flatMap((m) => (m.card ? [m.card] : [])),
   };
 }
 
@@ -65,11 +56,11 @@ export function handReducer(state: HandState, action: HandAction): HandState {
     case "DETECTION":
       return handleDetection(state, action.detection);
     case "ANALYSIS_STARTED":
-      return { ...state, analyzing: true, shouldAnalyze: false };
+      return { ...state, analyzing: true };
     case "ANALYSIS_COMPLETE":
       return { ...state, analyzing: false };
     case "RESET":
-      return INITIAL_STATE;
+      return { ...INITIAL_STATE };
     default:
       return state;
   }
@@ -86,7 +77,7 @@ function handleDetection(
   // Determine if this is the same street or a transition
   if (detectedStreet === state.street) {
     // Same street — reset pending, update heroTurn
-    const shouldAnalyze =
+    const triggerAnalysis =
       heroTurn && !state.heroTurn && !state.analyzing && state.street !== "WAITING";
     return {
       ...state,
@@ -95,7 +86,9 @@ function handleDetection(
       heroTurn,
       frameCount: 0,
       pendingStreet: null,
-      shouldAnalyze: shouldAnalyze || state.shouldAnalyze,
+      analyzeGeneration: triggerAnalysis
+        ? state.analyzeGeneration + 1
+        : state.analyzeGeneration,
     };
   }
 
@@ -130,23 +123,20 @@ function handleDetection(
         street: detectedStreet,
         heroCards: hero,
         communityCards: community,
-        timestamp: Date.now(),
       };
-      const handId =
-        detectedStreet === "PREFLOP" ? generateHandId() : state.handId;
-      const shouldAnalyze = heroTurn && !state.analyzing;
+      const triggerAnalysis = heroTurn && !state.analyzing;
       return {
         ...state,
         street: detectedStreet,
-        handId,
         heroCards: hero,
         communityCards: community,
         heroTurn,
         streets: [...state.streets, snapshot],
         frameCount: 0,
         pendingStreet: null,
-        shouldAnalyze,
-        analyzing: false,
+        analyzeGeneration: triggerAnalysis
+          ? state.analyzeGeneration + 1
+          : state.analyzeGeneration,
       };
     }
     return { ...state, frameCount: newCount, heroTurn };

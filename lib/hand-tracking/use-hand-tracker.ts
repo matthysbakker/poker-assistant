@@ -37,29 +37,11 @@ export function useHandTracker() {
 export function buildHandContext(state: HandState): string {
   if (state.streets.length === 0) return "";
 
-  const parts: string[] = [];
-
-  for (const snap of state.streets) {
-    const hero = snap.heroCards.join(" ");
-    const board = snap.communityCards.join(" ");
-
-    if (snap.street === "PREFLOP") {
-      parts.push(`PREFLOP: Hero holds ${hero}`);
-    } else {
-      parts.push(`${snap.street}: Board is ${board}`);
-    }
-  }
-
-  // Add current state if not yet in streets
-  const lastSnap = state.streets[state.streets.length - 1];
-  if (lastSnap && lastSnap.street !== state.street && state.street !== "WAITING") {
-    const board = state.communityCards.join(" ");
-    if (state.street === "PREFLOP") {
-      parts.push(`PREFLOP: Hero holds ${state.heroCards.join(" ")}`);
-    } else {
-      parts.push(`${state.street}: Board is ${board}`);
-    }
-  }
-
-  return parts.join(". ");
+  return state.streets
+    .map((snap) =>
+      snap.street === "PREFLOP"
+        ? `PREFLOP: Hero holds ${snap.heroCards.join(" ")}`
+        : `${snap.street}: Board is ${snap.communityCards.join(" ")}`,
+    )
+    .join(". ");
 }
