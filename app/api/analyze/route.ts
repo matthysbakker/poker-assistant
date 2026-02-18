@@ -66,11 +66,14 @@ export async function POST(req: Request) {
     console.error("[card-detection] Failed, falling back to Vision:", err);
   }
 
+  const captureMode = parsed.data.captureMode ?? "manual";
+
   const result = analyzeHand(
     parsed.data.image,
     parsed.data.opponentHistory,
     detectedCards,
     parsed.data.handContext,
+    captureMode,
   );
 
   // Non-blocking: save hand record to disk when stream completes
@@ -86,7 +89,7 @@ export async function POST(req: Request) {
         const record: HandRecord = {
           id: handId,
           timestamp,
-          captureMode: parsed.data.captureMode ?? "manual",
+          captureMode,
           screenshotFile: `${timestamp.slice(0, 10)}/${handId}.png`,
           detectedText: detectedCards ?? null,
           detectionDetails: buildDetectionDetails(detection),

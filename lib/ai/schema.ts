@@ -97,10 +97,12 @@ export const handAnalysisSchema = z.object({
     .describe("Step-by-step reasoning explaining the recommendation, written for beginners"),
   concept: z
     .string()
-    .describe("The key poker concept at play, e.g. 'Pot Odds', 'Position Advantage', 'Semi-Bluff'"),
+    .optional()
+    .describe("The key poker concept at play, e.g. 'Pot Odds', 'Position Advantage', 'Semi-Bluff'. Omit in continuous/fast mode."),
   tip: z
     .string()
-    .describe("A practical beginner-friendly tip related to this situation"),
+    .optional()
+    .describe("A practical beginner-friendly tip related to this situation. Omit in continuous/fast mode."),
 });
 
 export type HandAnalysis = z.infer<typeof handAnalysisSchema>;
