@@ -8,11 +8,26 @@ let pokerWindowId: number | null = null;
 
 console.log("[BG] Background script started");
 
+let badgeTimeoutId: ReturnType<typeof setTimeout> | null = null;
+
 function setBadge(text: string, color: string, timeout = 3000) {
+  if (badgeTimeoutId) {
+    clearTimeout(badgeTimeoutId);
+    badgeTimeoutId = null;
+  }
   chrome.browserAction.setBadgeText({ text });
   chrome.browserAction.setBadgeBackgroundColor({ color });
   if (timeout > 0) {
-    setTimeout(() => chrome.browserAction.setBadgeText({ text: "" }), timeout);
+    badgeTimeoutId = setTimeout(() => {
+      badgeTimeoutId = null;
+      // Restore "ON" badge if continuous capture is still running
+      if (isContinuousActive()) {
+        chrome.browserAction.setBadgeText({ text: "ON" });
+        chrome.browserAction.setBadgeBackgroundColor({ color: "#22c55e" });
+      } else {
+        chrome.browserAction.setBadgeText({ text: "" });
+      }
+    }, timeout);
   }
 }
 

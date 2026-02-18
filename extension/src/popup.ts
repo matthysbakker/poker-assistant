@@ -36,7 +36,13 @@ toggleBtn.addEventListener("click", () => {
   const messageType = continuousActive ? "CONTINUOUS_STOP" : "CONTINUOUS_START";
   toggleBtn.disabled = true;
 
+  // Safety timeout: re-enable if background doesn't respond within 3s
+  const timeout = setTimeout(() => {
+    toggleBtn.disabled = false;
+  }, 3000);
+
   chrome.runtime.sendMessage({ type: messageType }, (response) => {
+    clearTimeout(timeout);
     if (response?.ok) {
       continuousActive = response.continuous;
       updateToggleButton();
