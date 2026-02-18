@@ -82,6 +82,13 @@ export function AnalysisResult({
     }
   }, [isLoading, object, imageBase64, onHandSaved, onOpponentsDetected, onAnalysisComplete]);
 
+  // Clear analyzing flag when stream errors so state machine isn't permanently locked
+  useEffect(() => {
+    if (error && imageBase64) {
+      onAnalysisComplete?.();
+    }
+  }, [error, imageBase64, onAnalysisComplete]);
+
   if (!imageBase64) return null;
 
   if (error) {

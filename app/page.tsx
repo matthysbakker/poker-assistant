@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { PasteZone } from "@/components/analyzer/PasteZone";
 import { AnalysisResult } from "@/components/analyzer/AnalysisResult";
+import { DetectionSummary } from "@/components/analyzer/DetectionSummary";
 import { HandHistory } from "@/components/history/HandHistory";
 import type { Opponent } from "@/lib/ai/schema";
 import {
@@ -182,7 +183,17 @@ export default function Home() {
           <PasteZone onImageReady={setImageBase64} disabled={!!imageBase64} />
         )}
 
-        {/* Analysis result */}
+        {/* Tier 1: Instant detection summary (continuous mode only) */}
+        {isContinuous && handState.heroTurn && handState.analyzing && (
+          <DetectionSummary
+            heroCards={handState.heroCards}
+            communityCards={handState.communityCards}
+            street={handState.street}
+            isAnalyzing={handState.analyzing}
+          />
+        )}
+
+        {/* Tier 2: Full Claude analysis */}
         <AnalysisResult
           imageBase64={imageBase64}
           opponentHistory={opponentHistory}
