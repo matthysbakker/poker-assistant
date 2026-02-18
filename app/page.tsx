@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { PasteZone } from "@/components/analyzer/PasteZone";
 import { AnalysisResult } from "@/components/analyzer/AnalysisResult";
+import { DetectionSummary } from "@/components/analyzer/DetectionSummary";
 import { HandHistory } from "@/components/history/HandHistory";
 import type { Opponent } from "@/lib/ai/schema";
 import {
@@ -24,11 +25,13 @@ export default function Home() {
   const [opponentHistory, setOpponentHistory] = useState(() => getOpponentContext());
   const [extensionConnected, setExtensionConnected] = useState(false);
   const [handContext, setHandContext] = useState<string | undefined>();
+  const [streamKey, setStreamKey] = useState(0);
 
   // Continuous capture: hand tracking + detection loop + analysis triggers
   const { captureMode, setCaptureMode, switchToManual, handState, handleFrame, markAnalysisComplete, reset: resetCapture } =
     useContinuousCapture({
       onAnalysisTrigger: (base64, context) => {
+        setStreamKey((k) => k + 1); // remount to ensure clean stream
         setHandContext(context);
         setImageBase64(base64);
         setOpponentHistory(getOpponentContext());
@@ -44,6 +47,7 @@ export default function Home() {
       if (event.data.type === "CAPTURE" && event.data.base64) {
         // Manual hotkey capture → abort any in-flight detection, immediate analysis
         switchToManual();
+        setStreamKey((k) => k + 1); // remount AnalysisResult to kill old stream
         setHandContext(undefined);
         setOpponentHistory(getOpponentContext());
         setImageBase64(event.data.base64);
@@ -182,8 +186,19 @@ export default function Home() {
           <PasteZone onImageReady={setImageBase64} disabled={!!imageBase64} />
         )}
 
-        {/* Analysis result */}
+        {/* Tier 1: Instant detection summary (continuous mode only) */}
+        {isContinuous && handState.heroTurn && handState.analyzing && (
+          <DetectionSummary
+            heroCards={handState.heroCards}
+            communityCards={handState.communityCards}
+            street={handState.street}
+            isAnalyzing={handState.analyzing}
+          />
+        )}
+
+        {/* Tier 2: Full Claude analysis */}
         <AnalysisResult
+          key={streamKey}
           imageBase64={imageBase64}
           opponentHistory={opponentHistory}
           handContext={handContext}

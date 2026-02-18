@@ -19,7 +19,7 @@ async function debugCapture(filename: string, expected: string) {
       console.log(`  ${c.width}px at x=${c.x}: preprocessed=NULL`);
       continue;
     }
-    const match = matchCard(preprocessed, c.group, c.width);
+    const match = matchCard(preprocessed, c.group);
     console.log(
       `  ${c.width}px at x=${c.x}: ${match.card || "NONE"} ${match.confidence} score=${(match.matchScore * 100).toFixed(1)}% gap=${(match.gap * 100).toFixed(1)}%`,
     );
