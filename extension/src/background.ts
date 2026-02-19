@@ -7,10 +7,19 @@
  *   POKER_CAPTURE       bg → content     Manual hotkey screenshot (PNG)
  *   CAPTURE_FRAME       bg → content     Continuous capture frame (JPEG 85%)
  *
+ * Background ↔ Poker Content (chrome.runtime messages):
+ *   REGISTER_POKER_TAB    poker-content → bg   Tab registers as the poker tab
+ *   UNREGISTER_POKER_TAB  poker-content → bg   Tab unregisters on unload
+ *   AUTOPILOT_DECIDE      poker-content → bg   Request decision (messages array)
+ *   AUTOPILOT_ACTION      bg → poker-content   Decision result (action object)
+ *   AUTOPILOT_ENABLED     bg → poker-content   Toggle autopilot on/off
+ *
  * Background ↔ Popup (chrome.runtime messages):
- *   GET_STATUS          popup → bg       Query connection + continuous state
+ *   GET_STATUS          popup → bg       Query connection + continuous + autopilot state
  *   CONTINUOUS_START    popup → bg       Start continuous capture
  *   CONTINUOUS_STOP     popup → bg       Stop continuous capture
+ *   AUTOPILOT_START     popup → bg       Enable autopilot
+ *   AUTOPILOT_STOP      popup → bg       Disable autopilot
  *
  * Content ↔ Page (window.postMessage, source: "poker-assistant-ext"):
  *   EXTENSION_CONNECTED content → page   Extension presence announcement
@@ -29,6 +38,11 @@ const DEBOUNCE_MS = 3000;
 let captureInterval: ReturnType<typeof setInterval> | null = null;
 let pokerWindowId: number | null = null;
 
+// Autopilot state
+let pokerTabId: number | null = null;
+let autopilotActive = false;
+const AUTOPILOT_API_URL = "http://localhost:3000/api/autopilot";
+
 console.log("[BG] Background script started");
 
 let badgeTimeoutId: ReturnType<typeof setTimeout> | null = null;
@@ -43,8 +57,11 @@ function setBadge(text: string, color: string, timeout = 3000) {
   if (timeout > 0) {
     badgeTimeoutId = setTimeout(() => {
       badgeTimeoutId = null;
-      // Restore "ON" badge if continuous capture is still running
-      if (isContinuousActive()) {
+      // Restore persistent badge based on active mode
+      if (autopilotActive) {
+        chrome.browserAction.setBadgeText({ text: "AP" });
+        chrome.browserAction.setBadgeBackgroundColor({ color: "#8b5cf6" });
+      } else if (isContinuousActive()) {
         chrome.browserAction.setBadgeText({ text: "ON" });
         chrome.browserAction.setBadgeBackgroundColor({ color: "#22c55e" });
       } else {
@@ -111,6 +128,53 @@ function isContinuousActive() {
   return captureInterval !== null;
 }
 
+async function fetchAutopilotDecision(
+  messages: Array<{ role: string; content: string }>,
+) {
+  try {
+    const res = await fetch(AUTOPILOT_API_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ messages }),
+    });
+
+    if (!res.ok) {
+      console.error("[BG] Autopilot API error:", res.status);
+      sendFallbackAction("API returned " + res.status);
+      return;
+    }
+
+    const action = await res.json();
+    console.log(
+      `[BG] Autopilot decision: ${action.action}${action.amount ? ` €${action.amount}` : ""} — ${action.reasoning}`,
+    );
+
+    if (pokerTabId) {
+      chrome.tabs.sendMessage(pokerTabId, {
+        type: "AUTOPILOT_ACTION",
+        action,
+      });
+    }
+  } catch (err) {
+    console.error("[BG] Autopilot fetch failed:", err);
+    sendFallbackAction("Network error");
+  }
+}
+
+function sendFallbackAction(reason: string) {
+  const fallback = {
+    action: "FOLD",
+    amount: null,
+    reasoning: `Auto-fold: ${reason}`,
+  };
+  if (pokerTabId) {
+    chrome.tabs.sendMessage(pokerTabId, {
+      type: "AUTOPILOT_ACTION",
+      action: fallback,
+    });
+  }
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   console.log("[BG] Message:", message.type, "from tab:", sender.tab?.id);
 
@@ -134,6 +198,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     sendResponse({
       connected: webAppTabId !== null,
       continuous: isContinuousActive(),
+      pokerConnected: pokerTabId !== null,
+      autopilot: autopilotActive,
     });
     return;
   }
@@ -148,6 +214,70 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     stopContinuousCapture();
     sendResponse({ ok: true, continuous: false });
     return;
+  }
+
+  // ── Autopilot Messages ──────────────────────────────────────────────
+
+  if (message.type === "REGISTER_POKER_TAB" && sender.tab?.id) {
+    pokerTabId = sender.tab.id;
+    console.log("[BG] Poker tab registered:", pokerTabId);
+    // If autopilot was already active (e.g. page reload), re-enable
+    if (autopilotActive) {
+      chrome.tabs.sendMessage(pokerTabId, {
+        type: "AUTOPILOT_ENABLED",
+        enabled: true,
+      });
+    }
+    sendResponse({ ok: true });
+    return;
+  }
+
+  if (message.type === "UNREGISTER_POKER_TAB") {
+    if (sender.tab?.id === pokerTabId) {
+      pokerTabId = null;
+      console.log("[BG] Poker tab unregistered");
+    }
+    return;
+  }
+
+  if (message.type === "AUTOPILOT_START") {
+    autopilotActive = true;
+    console.log("[BG] Autopilot enabled");
+    if (pokerTabId) {
+      chrome.tabs.sendMessage(pokerTabId, {
+        type: "AUTOPILOT_ENABLED",
+        enabled: true,
+      });
+    }
+    setBadge("AP", "#8b5cf6", 0); // persistent purple badge
+    sendResponse({ ok: true, autopilot: true });
+    return;
+  }
+
+  if (message.type === "AUTOPILOT_STOP") {
+    autopilotActive = false;
+    console.log("[BG] Autopilot disabled");
+    if (pokerTabId) {
+      chrome.tabs.sendMessage(pokerTabId, {
+        type: "AUTOPILOT_ENABLED",
+        enabled: false,
+      });
+    }
+    // Restore badge to continuous state or clear
+    if (isContinuousActive()) {
+      setBadge("ON", "#22c55e", 0);
+    } else {
+      chrome.browserAction.setBadgeText({ text: "" });
+    }
+    sendResponse({ ok: true, autopilot: false });
+    return;
+  }
+
+  if (message.type === "AUTOPILOT_DECIDE") {
+    console.log("[BG] Autopilot decision requested");
+    // Proxy to localhost API (async — return true to keep sendResponse alive)
+    fetchAutopilotDecision(message.messages);
+    return; // async response via AUTOPILOT_ACTION message
   }
 });
 

@@ -13,6 +13,11 @@
       "matches": ["*://localhost/*"],
       "js": ["dist/content.js"],
       "run_at": "document_idle"
+    },
+    {
+      "matches": ["*://games.hollandcasino.nl/*"],
+      "js": ["dist/poker-content.js"],
+      "run_at": "document_idle"
     }
   ],
   "browser_action": {
