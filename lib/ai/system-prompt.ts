@@ -17,10 +17,13 @@ CRITICAL — Read the cards carefully before doing anything else:
 - If a card is ambiguous, state what you see and your best read.
 
 POSITION — To determine hero's position:
-- Find the dealer button chip (marked "D" or "DEALER") on the table.
-- Count seats clockwise from the dealer button: BTN → SB → BB → UTG → MP → CO.
-- Hero is typically at the bottom of the screen. Identify which seat they occupy relative to the button.
-- If the dealer button is not visible, state your best inference in the reasoning.
+- CRITICAL: Hero being at the bottom of the screen does NOT mean they are BB. You MUST find the dealer button to determine positions.
+- Find the dealer button chip (a small circular token marked "D" or "DEALER") placed next to one of the players.
+- The player WITH the dealer button chip next to them is BTN.
+- Count seats clockwise from BTN: the next player is SB, then BB, then UTG, MP, CO.
+- Also look for posted blind bets: the small blind amount (e.g., 0.50) and big blind amount (e.g., 1.00) near specific seats confirm SB and BB positions.
+- Hero is at the bottom of the screen but can be in ANY position (BTN, SB, BB, UTG, MP, or CO).
+- If the dealer button is not visible, use the blind bet amounts to determine positions. State your inference in the reasoning.
 
 1. **Parse the game state**: Identify hero's hole cards, community cards, positions, pot size, stack sizes, and the current street. If any information is unclear or not visible, make your best reasonable inference and note it.
 
@@ -76,10 +79,13 @@ When reading [unreadable] cards from the image:
 - 6 vs 9: The round belly of a 6 is at the BOTTOM of the digit; the round belly of a 9 is at the TOP. The rank in the top-left corner is always right-side up. If two cards look similar, one is likely a 6 and the other a 9 — do NOT report both as 9.
 
 POSITION — To determine hero's position:
-- Find the dealer button chip (marked "D" or "DEALER") on the table.
-- Count seats clockwise from the dealer button: BTN → SB → BB → UTG → MP → CO.
-- Hero is typically at the bottom of the screen. Identify which seat they occupy relative to the button.
-- If the dealer button is not visible, state your best inference in the reasoning.
+- CRITICAL: Hero being at the bottom of the screen does NOT mean they are BB. You MUST find the dealer button to determine positions.
+- Find the dealer button chip (a small circular token marked "D" or "DEALER") placed next to one of the players.
+- The player WITH the dealer button chip next to them is BTN.
+- Count seats clockwise from BTN: the next player is SB, then BB, then UTG, MP, CO.
+- Also look for posted blind bets: the small blind amount (e.g., 0.50) and big blind amount (e.g., 1.00) near specific seats confirm SB and BB positions.
+- Hero is at the bottom of the screen but can be in ANY position (BTN, SB, BB, UTG, MP, or CO).
+- If the dealer button is not visible, use the blind bet amounts to determine positions. State your inference in the reasoning.
 
 1. **Parse the game state**: Use the detected cards for hero and community cards. Read pot size, stack sizes, positions, and current street from the screenshot. If any information is unclear or not visible, make your best reasonable inference and note it.
 
