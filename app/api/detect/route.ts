@@ -1,8 +1,11 @@
 import { z } from "zod";
 import { detectCards } from "@/lib/card-detection";
 
+export const maxDuration = 10;
+
 const requestSchema = z.object({
   image: z.string().min(1).max(10_000_000),
+  hasPosition: z.boolean().optional(),
 });
 
 /** Lightweight detection-only endpoint. Returns cards + heroTurn, no Claude. */
@@ -24,7 +27,9 @@ export async function POST(req: Request) {
   }
 
   try {
-    const detection = await detectCards(parsed.data.image);
+    const detection = await detectCards(parsed.data.image, {
+      skipDealerDetection: parsed.data.hasPosition,
+    });
 
     return Response.json({
       heroCards: detection.heroCards,

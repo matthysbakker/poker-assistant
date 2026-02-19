@@ -17,8 +17,16 @@ export function heroPosition(dealerSeat: number): Position {
   return POSITIONS_6MAX[(6 - dealerSeat) % 6];
 }
 
+export interface DetectOptions {
+  /** Skip dealer button detection (when position is already locked). */
+  skipDealerDetection?: boolean;
+}
+
 /** Detect cards from a base64-encoded screenshot. */
-export async function detectCards(base64: string): Promise<DetectionResult> {
+export async function detectCards(
+  base64: string,
+  options?: DetectOptions,
+): Promise<DetectionResult> {
   const start = performance.now();
   const imageBuffer = Buffer.from(base64, "base64");
 
@@ -46,7 +54,9 @@ export async function detectCards(base64: string): Promise<DetectionResult> {
       }),
     ),
     hasHeroBlobs ? detectActionButtons(imageBuffer) : Promise.resolve(false),
-    detectDealerButton(imageBuffer),
+    options?.skipDealerDetection
+      ? Promise.resolve(null)
+      : detectDealerButton(imageBuffer),
   ]);
 
   const heroCards: CardMatch[] = [];

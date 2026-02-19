@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { PasteZone } from "@/components/analyzer/PasteZone";
 import { AnalysisResult } from "@/components/analyzer/AnalysisResult";
 import { DetectionSummary } from "@/components/analyzer/DetectionSummary";
@@ -38,6 +38,10 @@ export default function Home() {
       },
     });
 
+  // Track heroPosition via ref to avoid re-registering the message listener on every state change
+  const hasPositionRef = useRef(false);
+  hasPositionRef.current = handState.heroPosition !== null;
+
   // Listen for captures and connection status from the browser extension
   useEffect(() => {
     function handleMessage(event: MessageEvent) {
@@ -54,7 +58,7 @@ export default function Home() {
       } else if (event.data.type === "FRAME" && event.data.base64) {
         // Continuous capture frame → feed to state machine
         setCaptureMode("continuous");
-        handleFrame(event.data.base64);
+        handleFrame(event.data.base64, hasPositionRef.current);
       } else if (event.data.type === "EXTENSION_CONNECTED") {
         setExtensionConnected(true);
       }

@@ -39,7 +39,7 @@ export function useContinuousCapture({ onAnalysisTrigger }: UseContinuousCapture
   }, [handState, markAnalysisStarted]);
 
   const handleFrame = useCallback(
-    async (base64: string) => {
+    async (base64: string, hasPosition: boolean) => {
       // Debounce: skip if a detection is already in flight
       if (detectingRef.current) return;
       detectingRef.current = true;
@@ -51,7 +51,7 @@ export function useContinuousCapture({ onAnalysisTrigger }: UseContinuousCapture
         const res = await fetch("/api/detect", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ image: base64 }),
+          body: JSON.stringify({ image: base64, hasPosition }),
           signal: controller.signal,
         });
 
