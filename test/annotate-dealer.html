@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Dealer Button Position Annotator</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, system-ui, sans-serif; background: #1a1a2e; color: #eee; padding: 20px; }
+  h1 { margin-bottom: 8px; }
+  .subtitle { color: #888; margin-bottom: 20px; font-size: 14px; }
+  .stats { background: #16213e; padding: 12px 16px; border-radius: 8px; margin-bottom: 20px; display: flex; gap: 20px; font-size: 14px; }
+  .stats span { color: #0f0; }
+  .legend { background: #16213e; padding: 12px 16px; border-radius: 8px; margin-bottom: 20px; font-size: 13px; line-height: 1.8; }
+  .legend .seat { display: inline-block; padding: 2px 8px; border-radius: 4px; margin: 0 2px; font-weight: bold; font-family: monospace; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(520px, 1fr)); gap: 16px; }
+  .card { background: #16213e; border-radius: 8px; overflow: hidden; border: 2px solid transparent; }
+  .card.done { border-color: #0f03; }
+  .card .img-wrap { position: relative; cursor: pointer; }
+  .card img { width: 100%; display: block; }
+  .card img.zoomed { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); width: auto; max-width: 95vw; max-height: 95vh; z-index: 1000; border-radius: 8px; box-shadow: 0 0 40px rgba(0,0,0,0.8); }
+  .overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.8); z-index: 999; display: none; }
+  .overlay.active { display: block; }
+  .info { padding: 12px; }
+  .ts { font-size: 12px; color: #888; margin-bottom: 8px; font-family: monospace; }
+  .seat-btns { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+  .seat-btn { background: #0d1b3e; border: 2px solid #333; color: #aaa; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 13px; font-family: monospace; transition: all 0.15s; }
+  .seat-btn:hover { border-color: #4a9eff; color: #fff; }
+  .seat-btn.selected { background: #1a5a1a; border-color: #0f0; color: #0f0; font-weight: bold; }
+  .seat-btn.selected-none { background: #3a1a1a; border-color: #f44; color: #f44; }
+  .actions { display: flex; gap: 8px; margin-bottom: 20px; }
+  button { background: #4a9eff; color: #fff; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-size: 14px; }
+  button:hover { background: #3a8eef; }
+  button.secondary { background: #333; }
+  button.secondary:hover { background: #444; }
+  #output { background: #0d1b3e; padding: 16px; border-radius: 8px; font-family: monospace; font-size: 12px; white-space: pre-wrap; display: none; max-height: 400px; overflow-y: auto; margin-top: 16px; }
+  .same-hand { font-size: 11px; color: #666; padding: 0 12px 8px; }
+</style>
+</head>
+<body>
+
+<h1>Dealer Button Position Annotator</h1>
+<p class="subtitle">Click image to zoom. Click seat button to mark dealer position. Captures in the same hand share the same D position.</p>
+
+<div class="legend">
+  <strong>Seats (clockwise from hero):</strong>
+  <span class="seat" style="background:#2a4a2a">0</span> Hero (bottom center)
+  <span class="seat" style="background:#2a3a4a">1</span> Bottom-left
+  <span class="seat" style="background:#2a3a4a">2</span> Top-left
+  <span class="seat" style="background:#2a3a4a">3</span> Top-center
+  <span class="seat" style="background:#2a3a4a">4</span> Top-right
+  <span class="seat" style="background:#2a3a4a">5</span> Bottom-right
+  <span class="seat" style="background:#4a2a2a">?</span> Not visible
+</div>
+
+<div class="stats" id="stats"></div>
+
+<div class="actions">
+  <button onclick="exportTS()">Export TypeScript</button>
+  <button class="secondary" onclick="exportJSON()">Export JSON</button>
+  <button class="secondary" onclick="showOnlyNew()">Show Unannotated</button>
+  <button class="secondary" onclick="showAll()">Show All</button>
+  <button class="secondary" onclick="propagateHands()">Auto-fill Same Hand</button>
+</div>
+
+<div class="grid" id="grid"></div>
+<pre id="output"></pre>
+<div class="overlay" id="overlay" onclick="closeZoom()"></div>
+
+<script>
+// Captures grouped by hand (same hero cards = same hand = same D position)
+const HAND_GROUPS = {
+  "2026-02-17T13-37-28-840Z": "h1", "2026-02-17T13-37-56-433Z": "h1",
+  "2026-02-17T13-38-53-206Z": "h2", "2026-02-17T13-39-01-369Z": "h2", "2026-02-17T13-39-46-183Z": "h2",
+  "2026-02-17T13-40-46-504Z": "h3", "2026-02-17T13-41-08-096Z": "h3", "2026-02-17T13-41-25-899Z": "h3",
+  "2026-02-17T13-44-37-752Z": "h4",
+  "2026-02-17T14-25-45-727Z": "h5",
+  "2026-02-17T14-26-05-475Z": "h6", "2026-02-17T14-26-56-012Z": "h6", "2026-02-17T14-27-22-803Z": "h6",
+  "2026-02-17T14-28-23-356Z": "h7",
+  "2026-02-17T14-31-56-491Z": "h8",
+  "2026-02-17T14-35-15-232Z": "h9",
+  "2026-02-17T14-36-28-902Z": "h10",
+};
+
+const CAPTURES = [
+  "2026-02-17T13-37-28-840Z","2026-02-17T13-37-56-433Z","2026-02-17T13-38-53-206Z","2026-02-17T13-39-01-369Z","2026-02-17T13-39-46-183Z","2026-02-17T13-40-46-504Z","2026-02-17T13-41-08-096Z","2026-02-17T13-41-25-899Z","2026-02-17T13-44-37-752Z","2026-02-17T14-25-45-727Z","2026-02-17T14-26-05-475Z","2026-02-17T14-26-56-012Z","2026-02-17T14-27-22-803Z","2026-02-17T14-28-23-356Z","2026-02-17T14-31-56-491Z","2026-02-17T14-35-15-232Z","2026-02-17T14-36-28-902Z","2026-02-17T22-03-53-545Z","2026-02-17T23-34-25-924Z","2026-02-17T23-36-03-587Z","2026-02-17T23-36-29-216Z","2026-02-18T10-37-19-292Z","2026-02-18T10-37-28-999Z","2026-02-18T10-37-57-625Z","2026-02-18T10-38-07-553Z","2026-02-18T10-39-09-673Z","2026-02-18T10-40-46-393Z","2026-02-18T10-41-50-700Z","2026-02-18T10-42-29-143Z","2026-02-18T10-43-46-462Z","2026-02-18T10-43-49-827Z","2026-02-18T10-44-19-671Z","2026-02-18T10-44-42-297Z","2026-02-18T10-45-07-857Z","2026-02-18T10-45-53-473Z","2026-02-18T10-46-34-098Z","2026-02-18T10-47-01-507Z","2026-02-18T10-47-29-405Z","2026-02-18T10-48-10-309Z","2026-02-18T10-48-45-232Z","2026-02-18T10-49-12-759Z","2026-02-18T10-49-35-186Z","2026-02-18T10-49-46-086Z","2026-02-18T10-50-08-775Z","2026-02-18T10-50-50-026Z","2026-02-18T10-51-06-252Z","2026-02-18T10-51-40-478Z","2026-02-18T15-43-57-146Z","2026-02-18T15-44-06-337Z","2026-02-18T15-45-06-776Z","2026-02-18T15-45-48-695Z","2026-02-18T15-46-34-073Z","2026-02-18T15-47-00-184Z","2026-02-18T15-48-01-165Z","2026-02-18T15-48-16-604Z","2026-02-18T15-48-55-787Z","2026-02-18T15-51-32-786Z","2026-02-18T15-52-05-025Z","2026-02-18T15-52-23-263Z","2026-02-18T15-53-13-870Z","2026-02-18T15-53-18-699Z","2026-02-18T15-54-01-221Z","2026-02-18T15-57-08-263Z","2026-02-18T15-58-57-934Z","2026-02-18T15-59-13-650Z","2026-02-18T15-59-30-992Z","2026-02-18T15-59-35-269Z","2026-02-18T16-00-18-105Z","2026-02-18T16-01-20-418Z","2026-02-18T16-01-41-462Z","2026-02-18T20-58-23-346Z","2026-02-18T20-58-39-388Z","2026-02-18T20-59-05-858Z","2026-02-18T20-59-42-676Z","2026-02-18T21-00-31-900Z","2026-02-18T21-02-22-794Z","2026-02-18T21-03-54-677Z","2026-02-18T21-05-02-221Z","2026-02-18T21-05-10-777Z","2026-02-18T21-05-35-707Z","2026-02-18T21-05-49-236Z","2026-02-18T21-09-46-179Z","2026-02-18T21-10-51-658Z","2026-02-18T21-12-43-998Z","2026-02-18T21-15-49-607Z","2026-02-18T21-16-31-773Z","2026-02-18T21-17-12-546Z","2026-02-18T21-19-11-614Z","2026-02-18T21-20-26-647Z","2026-02-18T21-20-38-483Z","2026-02-18T21-21-25-390Z","2026-02-18T21-21-49-743Z","2026-02-18T21-21-53-638Z","2026-02-18T21-25-21-930Z","2026-02-18T21-25-42-106Z","2026-02-18T21-25-43-633Z","2026-02-18T21-26-15-151Z","2026-02-18T21-26-43-523Z","2026-02-18T22-06-57-663Z","2026-02-18T22-07-22-698Z","2026-02-18T22-07-38-837Z","2026-02-18T22-08-37-742Z","2026-02-18T22-10-32-542Z","2026-02-18T22-11-25-012Z","2026-02-18T22-11-39-033Z","2026-02-18T22-12-21-707Z","2026-02-18T22-14-01-905Z","2026-02-18T22-14-05-763Z","2026-02-18T22-14-44-506Z","2026-02-18T22-14-58-746Z","2026-02-18T22-15-20-805Z","2026-02-18T22-15-41-616Z","2026-02-18T22-15-52-219Z","2026-02-18T22-16-54-339Z","2026-02-18T22-17-32-830Z","2026-02-18T22-17-47-267Z","2026-02-18T22-19-14-610Z","2026-02-18T22-19-29-446Z","2026-02-18T22-20-31-566Z","2026-02-18T22-21-08-766Z","2026-02-18T22-56-54-756Z","2026-02-18T22-56-56-543Z","2026-02-18T22-58-58-699Z","2026-02-18T22-58-59-087Z","2026-02-18T23-02-15-118Z","2026-02-18T23-02-49-676Z","2026-02-18T23-03-59-606Z","2026-02-18T23-04-16-529Z","2026-02-18T23-15-58-543Z"
+];
+
+const SEAT_LABELS = ["0: Hero", "1: Bot-L", "2: Top-L", "3: Top-C", "4: Top-R", "5: Bot-R", "?: N/A"];
+const annotations = {}; // ts -> seat number (0-5) or -1 for not visible
+
+function init() {
+  const grid = document.getElementById('grid');
+
+  CAPTURES.forEach(ts => {
+    const div = document.createElement('div');
+    div.className = 'card';
+    div.dataset.ts = ts;
+    div.id = 'card-' + ts;
+
+    div.innerHTML = `
+      <div class="img-wrap">
+        <img src="captures/${ts}.png" alt="${ts}" onclick="toggleZoom(this)" loading="lazy">
+      </div>
+      <div class="info">
+        <div class="ts">${ts}</div>
+        <div class="seat-btns">
+          ${[0,1,2,3,4,5].map(s =>
+            `<div class="seat-btn" data-ts="${ts}" data-seat="${s}" onclick="selectSeat('${ts}', ${s})">${SEAT_LABELS[s]}</div>`
+          ).join('')}
+          <div class="seat-btn" data-ts="${ts}" data-seat="-1" onclick="selectSeat('${ts}', -1)">${SEAT_LABELS[6]}</div>
+        </div>
+      </div>
+    `;
+    grid.appendChild(div);
+  });
+
+  updateStats();
+}
+
+function selectSeat(ts, seat) {
+  annotations[ts] = seat;
+  const card = document.getElementById('card-' + ts);
+  card.classList.add('done');
+
+  // Update button states
+  card.querySelectorAll('.seat-btn').forEach(btn => {
+    const s = parseInt(btn.dataset.seat);
+    btn.classList.remove('selected', 'selected-none');
+    if (s === seat) {
+      btn.classList.add(seat === -1 ? 'selected-none' : 'selected');
+    }
+  });
+
+  updateStats();
+}
+
+function propagateHands() {
+  // For each annotated capture, propagate to other captures in the same hand group
+  const grouped = {};
+  for (const [ts, group] of Object.entries(HAND_GROUPS)) {
+    if (!grouped[group]) grouped[group] = [];
+    grouped[group].push(ts);
+  }
+
+  let propagated = 0;
+  for (const members of Object.values(grouped)) {
+    const annotated = members.find(ts => annotations[ts] !== undefined);
+    if (!annotated) continue;
+    const seat = annotations[annotated];
+    for (const ts of members) {
+      if (annotations[ts] === undefined) {
+        selectSeat(ts, seat);
+        propagated++;
+      }
+    }
+  }
+
+  if (propagated > 0) alert(`Auto-filled ${propagated} captures from same-hand groups.`);
+  else alert('No new captures to auto-fill. Annotate one capture per hand first.');
+}
+
+function updateStats() {
+  const total = CAPTURES.length;
+  const annotated = Object.keys(annotations).length;
+  const seats = {};
+  for (const s of Object.values(annotations)) {
+    seats[s] = (seats[s] || 0) + 1;
+  }
+  const dist = Object.entries(seats).sort(([a],[b]) => Number(a)-Number(b))
+    .map(([s,c]) => `seat ${s}: ${c}`).join(', ');
+  document.getElementById('stats').innerHTML =
+    `Total: ${total} | Annotated: <span>${annotated}/${total}</span> | ${dist || 'none yet'}`;
+}
+
+function showOnlyNew() {
+  document.querySelectorAll('.card').forEach(c => {
+    c.style.display = annotations[c.dataset.ts] !== undefined ? 'none' : '';
+  });
+}
+
+function showAll() {
+  document.querySelectorAll('.card').forEach(c => c.style.display = '');
+}
+
+function toggleZoom(img) {
+  if (img.classList.contains('zoomed')) { closeZoom(); return; }
+  closeZoom();
+  img.classList.add('zoomed');
+  document.getElementById('overlay').classList.add('active');
+}
+
+function closeZoom() {
+  document.querySelectorAll('img.zoomed').forEach(i => i.classList.remove('zoomed'));
+  document.getElementById('overlay').classList.remove('active');
+}
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') closeZoom();
+  // Quick keys 0-5 and ? while zoomed
+  if (document.querySelector('img.zoomed')) {
+    const zoomed = document.querySelector('img.zoomed');
+    const ts = zoomed.closest('.card')?.dataset.ts;
+    if (!ts) return;
+    if (e.key >= '0' && e.key <= '5') { selectSeat(ts, parseInt(e.key)); closeZoom(); }
+    if (e.key === '/' || e.key === '?') { selectSeat(ts, -1); closeZoom(); }
+  }
+});
+
+function exportTS() {
+  const entries = Object.entries(annotations)
+    .filter(([,s]) => s >= 0)
+    .sort(([a],[b]) => a.localeCompare(b))
+    .map(([ts, s]) => `  "${ts}": ${s},`);
+  const out = `const DEALER_GROUND_TRUTH: Record<string, number> = {\n${entries.join('\n')}\n};`;
+  showOutput(out);
+}
+
+function exportJSON() {
+  const data = {};
+  for (const [ts, s] of Object.entries(annotations).sort(([a],[b]) => a.localeCompare(b))) {
+    if (s >= 0) data[ts] = s;
+  }
+  showOutput(JSON.stringify(data, null, 2));
+}
+
+function showOutput(text) {
+  const el = document.getElementById('output');
+  el.style.display = 'block';
+  el.textContent = text;
+  el.scrollIntoView({ behavior: 'smooth' });
+  navigator.clipboard?.writeText(text).then(() => {
+    el.textContent = '(Copied to clipboard!)\n\n' + text;
+  });
+}
+
+init();
+</script>
+</body>
+</html>

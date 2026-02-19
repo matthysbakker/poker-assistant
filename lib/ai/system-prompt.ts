@@ -17,13 +17,11 @@ CRITICAL — Read the cards carefully before doing anything else:
 - If a card is ambiguous, state what you see and your best read.
 
 POSITION — To determine hero's position:
-- CRITICAL: Hero being at the bottom of the screen does NOT mean they are BB. You MUST find the dealer button to determine positions.
-- Find the dealer button chip (a small circular token marked "D" or "DEALER") placed next to one of the players.
-- The player WITH the dealer button chip next to them is BTN.
-- Count seats clockwise from BTN: the next player is SB, then BB, then UTG, MP, CO.
-- Also look for posted blind bets: the small blind amount (e.g., 0.50) and big blind amount (e.g., 1.00) near specific seats confirm SB and BB positions.
-- Hero is at the bottom of the screen but can be in ANY position (BTN, SB, BB, UTG, MP, or CO).
-- If the dealer button is not visible, use the blind bet amounts to determine positions. State your inference in the reasoning.
+- If "Hero position: BTN" (or SB, BB, UTG, MP, CO) appears in the user message, it is GROUND TRUTH from local dealer button detection. Use it exactly — do NOT re-determine position from the image.
+- Otherwise, find the dealer button chip (a small circular token marked "D" or "DEALER") placed next to one of the players. That player is BTN. Count clockwise: SB, BB, UTG, MP, CO.
+- CRITICAL: Hero being at the bottom of the screen does NOT mean they are BB.
+- Also look for posted blind bets to confirm SB and BB seats.
+- If neither detected position nor dealer button is visible, use blind bet amounts. State your inference in the reasoning.
 
 1. **Parse the game state**: Identify hero's hole cards, community cards, positions, pot size, stack sizes, and the current street. If any information is unclear or not visible, make your best reasonable inference and note it.
 
@@ -79,15 +77,13 @@ When reading [unreadable] cards from the image:
 - 6 vs 9: The round belly of a 6 is at the BOTTOM of the digit; the round belly of a 9 is at the TOP. The rank in the top-left corner is always right-side up. If two cards look similar, one is likely a 6 and the other a 9 — do NOT report both as 9.
 
 POSITION — To determine hero's position:
-- CRITICAL: Hero being at the bottom of the screen does NOT mean they are BB. You MUST find the dealer button to determine positions.
-- Find the dealer button chip (a small circular token marked "D" or "DEALER") placed next to one of the players.
-- The player WITH the dealer button chip next to them is BTN.
-- Count seats clockwise from BTN: the next player is SB, then BB, then UTG, MP, CO.
-- Also look for posted blind bets: the small blind amount (e.g., 0.50) and big blind amount (e.g., 1.00) near specific seats confirm SB and BB positions.
-- Hero is at the bottom of the screen but can be in ANY position (BTN, SB, BB, UTG, MP, or CO).
-- If the dealer button is not visible, use the blind bet amounts to determine positions. State your inference in the reasoning.
+- If "Hero position: BTN" (or SB, BB, UTG, MP, CO) is provided in the detected cards, it is GROUND TRUTH from local dealer button detection. Use it exactly — do NOT re-determine position from the image.
+- If no position is provided: find the dealer button chip (a small circular token marked "D" or "DEALER") placed next to one of the players. That player is BTN. Count clockwise: SB, BB, UTG, MP, CO.
+- CRITICAL: Hero being at the bottom of the screen does NOT mean they are BB.
+- Also look for posted blind bets to confirm SB and BB seats.
+- If neither detected position nor dealer button is visible, use blind bet amounts. State your inference in the reasoning.
 
-1. **Parse the game state**: Use the detected cards for hero and community cards. Read pot size, stack sizes, positions, and current street from the screenshot. If any information is unclear or not visible, make your best reasonable inference and note it.
+1. **Parse the game state**: Use the detected cards for hero and community cards. Use the detected position for hero's position. Read pot size, stack sizes, and current street from the screenshot. If any information is unclear or not visible, make your best reasonable inference and note it.
 
 2. **Read all opponents**: For every visible player at the table, extract:
    - Seat number (1-9, clockwise from bottom)

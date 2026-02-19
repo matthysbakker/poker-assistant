@@ -46,10 +46,13 @@ export interface LocatedCard {
   corner: { x: number; y: number; width: number; height: number };
 }
 
+export type Position = "UTG" | "MP" | "CO" | "BTN" | "SB" | "BB";
+
 export interface DetectionResult {
   heroCards: CardMatch[];
   communityCards: CardMatch[];
   detectedText: string;
   heroTurn: boolean;
+  heroPosition: Position | null;
   timing: number;
 }

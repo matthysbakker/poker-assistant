@@ -16,6 +16,7 @@ export const INITIAL_STATE: HandState = {
   pendingStreet: null,
   analyzeGeneration: 0,
   analyzing: false,
+  heroPosition: null,
 };
 
 /** Map community card count to expected street. */
@@ -73,6 +74,8 @@ function handleDetection(
   const { hero, community } = cardCodes(detection);
   const detectedStreet = streetFromCommunityCount(hero.length, community.length);
   const heroTurn = detection.heroTurn;
+  // Lock position: use first non-null detection, don't overwrite within a hand
+  const heroPosition = state.heroPosition ?? detection.heroPosition;
 
   // Determine if this is the same street or a transition
   if (detectedStreet === state.street) {
@@ -84,6 +87,7 @@ function handleDetection(
       heroCards: hero.length > 0 ? hero : state.heroCards,
       communityCards: community.length > 0 ? community : state.communityCards,
       heroTurn,
+      heroPosition,
       frameCount: 0,
       pendingStreet: null,
       analyzeGeneration: triggerAnalysis
@@ -104,15 +108,15 @@ function handleDetection(
           analyzeGeneration: state.analyzeGeneration,
         };
       }
-      return { ...state, frameCount: newCount, heroTurn };
+      return { ...state, frameCount: newCount, heroTurn, heroPosition };
     }
     // Start counting toward WAITING
-    return { ...state, pendingStreet: "WAITING", frameCount: 1, heroTurn };
+    return { ...state, pendingStreet: "WAITING", frameCount: 1, heroTurn, heroPosition };
   }
 
   // Forward-only: ignore backward transitions (except to WAITING)
   if (STREET_ORDER[detectedStreet] <= STREET_ORDER[state.street]) {
-    return { ...state, heroTurn };
+    return { ...state, heroTurn, heroPosition };
   }
 
   // Forward transition with hysteresis
@@ -132,6 +136,7 @@ function handleDetection(
         heroCards: hero,
         communityCards: community,
         heroTurn,
+        heroPosition,
         streets: [...state.streets, snapshot],
         frameCount: 0,
         pendingStreet: null,
@@ -140,9 +145,9 @@ function handleDetection(
           : state.analyzeGeneration,
       };
     }
-    return { ...state, frameCount: newCount, heroTurn };
+    return { ...state, frameCount: newCount, heroTurn, heroPosition };
   }
 
   // Start counting toward new street
-  return { ...state, pendingStreet: detectedStreet, frameCount: 1, heroTurn };
+  return { ...state, pendingStreet: detectedStreet, frameCount: 1, heroTurn, heroPosition };
 }

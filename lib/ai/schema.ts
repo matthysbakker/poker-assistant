@@ -63,10 +63,9 @@ export const handAnalysisSchema = z.object({
   heroPosition: z
     .enum(["UTG", "MP", "CO", "BTN", "SB", "BB"])
     .describe(
-      "Hero's position at the table. CRITICAL: Do NOT assume hero is BB because they are at the bottom of the screen. " +
-      "Find the dealer button chip (small circle marked 'D') placed next to a player — that player is BTN. " +
-      "Count clockwise from BTN: next is SB, then BB, then UTG, MP, CO. " +
-      "Also check posted blind bets (small/big amounts) to confirm SB and BB seats."
+      "Hero's position at the table. If 'Hero position: ...' was provided in detected cards, use it exactly as ground truth. " +
+      "Otherwise, find the dealer button chip (small circle marked 'D') — that player is BTN. " +
+      "Count clockwise: SB, BB, UTG, MP, CO. Do NOT assume hero is BB because they are at the bottom of the screen."
     ),
   potSize: z
     .string()

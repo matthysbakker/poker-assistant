@@ -1,4 +1,6 @@
 export { detectCards } from "./detect";
 export { locateCards } from "./locate";
 export { clearReferenceCache, saveReference, preprocessCrop } from "./match";
-export type { CardCode, CardGroup, CardMatch, LocatedCard, DetectionResult } from "./types";
+export { detectDealerButton } from "./dealer-button";
+export { heroPosition } from "./position";
+export type { CardCode, CardGroup, CardMatch, LocatedCard, DetectionResult, Position } from "./types";

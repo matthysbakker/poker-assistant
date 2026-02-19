@@ -3,6 +3,8 @@ import { locateCards } from "./locate";
 import { cropCorner, matchCard } from "./match";
 import { preprocessCrop } from "./preprocess";
 import { detectActionButtons } from "./buttons";
+import { detectDealerButton } from "./dealer-button";
+import { heroPosition } from "./position";
 import type { CardMatch, DetectionResult } from "./types";
 
 /** Detect cards from a base64-encoded screenshot. */
@@ -20,7 +22,7 @@ export async function detectCards(base64: string): Promise<DetectionResult> {
   // Skip button detection when no hero-group blobs were found.
   const hasHeroBlobs = cards.some((c) => c.group === "hero");
 
-  const [cardResults, heroTurn] = await Promise.all([
+  const [cardResults, heroTurn, dealerResult] = await Promise.all([
     Promise.all(
       cards.map(async (card) => {
         const cornerCrop = await cropCorner(imageBuffer, card);
@@ -34,6 +36,7 @@ export async function detectCards(base64: string): Promise<DetectionResult> {
       }),
     ),
     hasHeroBlobs ? detectActionButtons(imageBuffer) : Promise.resolve(false),
+    detectDealerButton(imageBuffer),
   ]);
 
   const heroCards: CardMatch[] = [];
@@ -46,12 +49,14 @@ export async function detectCards(base64: string): Promise<DetectionResult> {
   }
 
   const timing = Math.round(performance.now() - start);
+  const position = dealerResult ? heroPosition(dealerResult.seat) : null;
 
   return {
     heroCards,
     communityCards,
-    detectedText: formatDetectedCards(heroCards, communityCards),
+    detectedText: formatDetectedCards(heroCards, communityCards, position),
     heroTurn,
+    heroPosition: position,
     timing,
   };
 }
@@ -65,10 +70,15 @@ export async function detectCards(base64: string): Promise<DetectionResult> {
 function formatDetectedCards(
   hero: CardMatch[],
   community: CardMatch[],
+  position: import("./types").Position | null,
 ): string {
-  if (hero.length === 0 && community.length === 0) return "";
+  if (hero.length === 0 && community.length === 0 && !position) return "";
 
   const parts: string[] = [];
+
+  if (position) {
+    parts.push(`Hero position: ${position}`);
+  }
 
   if (hero.length > 0) {
     parts.push(`Hero: ${hero.map((m) => m.card ?? "[unreadable]").join(" ")}`);

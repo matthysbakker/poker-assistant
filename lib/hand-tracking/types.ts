@@ -1,4 +1,4 @@
-import type { CardCode } from "@/lib/card-detection/types";
+import type { CardCode, Position } from "@/lib/card-detection/types";
 import type { DetectionResult } from "@/lib/card-detection/types";
 
 export type Street = "WAITING" | "PREFLOP" | "FLOP" | "TURN" | "RIVER";
@@ -28,6 +28,8 @@ export interface HandState {
   analyzeGeneration: number;
   /** Whether a Claude request is currently in flight. */
   analyzing: boolean;
+  /** Hero's position at the table (locked on first detection within a hand). */
+  heroPosition: Position | null;
 }
 
 export type HandAction =

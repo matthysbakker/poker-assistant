@@ -37,11 +37,20 @@ export function useHandTracker() {
 export function buildHandContext(state: HandState): string {
   if (state.streets.length === 0) return "";
 
-  return state.streets
-    .map((snap) =>
+  const parts: string[] = [];
+
+  // Include position if detected
+  if (state.heroPosition) {
+    parts.push(`Hero position: ${state.heroPosition}`);
+  }
+
+  parts.push(
+    ...state.streets.map((snap) =>
       snap.street === "PREFLOP"
         ? `PREFLOP: Hero holds ${snap.heroCards.join(" ")}`
         : `${snap.street}: Board is ${snap.communityCards.join(" ")}`,
-    )
-    .join(". ");
+    ),
+  );
+
+  return parts.join(". ");
 }
