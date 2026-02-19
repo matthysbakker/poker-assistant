@@ -31,6 +31,7 @@ export async function POST(req: Request) {
       communityCards: detection.communityCards,
       detectedText: detection.detectedText,
       heroTurn: detection.heroTurn,
+      heroPosition: detection.heroPosition,
       timing: detection.timing,
     });
   } catch (err) {

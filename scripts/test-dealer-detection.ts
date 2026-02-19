@@ -7,7 +7,7 @@
 import { readFileSync } from "fs";
 import { join } from "path";
 import { detectDealerButton } from "../lib/card-detection/dealer-button";
-import { heroPosition } from "../lib/card-detection/position";
+import { heroPosition } from "../lib/card-detection/detect";
 import { DEALER_GROUND_TRUTH } from "../test/dealer-ground-truth";
 
 const CAPTURES_DIR = "test/captures";
@@ -32,26 +32,24 @@ async function main() {
   for (const [ts, expectedSeat] of entries) {
     const file = `${ts}.png`;
     const buf = readFileSync(join(CAPTURES_DIR, file));
-    const result = await detectDealerButton(buf);
+    const seat = await detectDealerButton(buf);
 
-    if (!result) {
+    if (seat === null) {
       notFound++;
       errors.push(
         `  MISS  ${ts}: expected seat ${expectedSeat} (${SEAT_NAMES[expectedSeat]}), got: NOT FOUND`,
       );
-    } else if (result.seat !== expectedSeat) {
+    } else if (seat !== expectedSeat) {
       wrong++;
       errors.push(
         `  WRONG ${ts}: expected seat ${expectedSeat} (${SEAT_NAMES[expectedSeat]}), ` +
-          `got seat ${result.seat} (${SEAT_NAMES[result.seat]}) ` +
-          `conf=${result.confidence.toFixed(2)} pos=(${result.relX.toFixed(3)}, ${result.relY.toFixed(3)})`,
+          `got seat ${seat} (${SEAT_NAMES[seat]})`,
       );
     } else {
       correct++;
-      const pos = heroPosition(result.seat);
+      const pos = heroPosition(seat);
       console.log(
-        `  OK    ${ts}: seat ${result.seat} (${SEAT_NAMES[result.seat]}) → ${pos} ` +
-          `conf=${result.confidence.toFixed(2)}`,
+        `  OK    ${ts}: seat ${seat} (${SEAT_NAMES[seat]}) → ${pos}`,
       );
     }
   }

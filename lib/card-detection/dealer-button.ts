@@ -1,16 +1,5 @@
 import sharp from "sharp";
 
-export interface DealerButtonResult {
-  /** Seat number (0-5), clockwise from hero. 0 = hero. */
-  seat: number;
-  /** Detection confidence (0-1). */
-  confidence: number;
-  /** Relative x position of detected button (0-1). */
-  relX: number;
-  /** Relative y position of detected button (0-1). */
-  relY: number;
-}
-
 /**
  * Analysis width for dealer button detection.
  * At 960px, the D button at peripheral seats is ~5-8px — detectable.
@@ -67,6 +56,11 @@ const SEAT_POSITIONS = [
 /** Maximum Euclidean distance (relative coords) to accept a seat match. */
 const MAX_SEAT_DISTANCE = 0.12;
 
+// --- Scoring weights for candidate ranking ---
+const WEIGHT_PROXIMITY = 0.35;
+const WEIGHT_BRIGHTNESS = 0.4;
+const WEIGHT_CIRCULARITY = 0.25;
+
 /**
  * Detect the dealer button ("D" chip) in a poker table screenshot.
  *
@@ -83,7 +77,7 @@ const MAX_SEAT_DISTANCE = 0.12;
  */
 export async function detectDealerButton(
   imageBuffer: Buffer,
-): Promise<DealerButtonResult | null> {
+): Promise<number | null> {
   const meta = await sharp(imageBuffer).metadata();
   if (!meta.width || !meta.height) return null;
 
@@ -223,14 +217,7 @@ export async function detectDealerButton(
   }
 
   // Filter and score candidates
-  type Candidate = {
-    relX: number;
-    relY: number;
-    seat: number;
-    distance: number;
-    area: number;
-    score: number;
-  };
+  type Candidate = { seat: number; score: number };
   const candidates: Candidate[] = [];
 
   for (const blob of blobs) {
@@ -274,30 +261,17 @@ export async function detectDealerButton(
     const brightnessScore = Math.min(avgBrightness / 255, 1);
     const circularity = 1 - Math.abs(1 - aspect) / MAX_ASPECT;
 
-    const score = proximity * 0.35 + brightnessScore * 0.40 + circularity * 0.25;
+    const score =
+      proximity * WEIGHT_PROXIMITY +
+      brightnessScore * WEIGHT_BRIGHTNESS +
+      circularity * WEIGHT_CIRCULARITY;
 
-    candidates.push({
-      relX,
-      relY,
-      seat: bestSeat,
-      distance: bestDist,
-      area: blob.area,
-      score,
-    });
+    candidates.push({ seat: bestSeat, score });
   }
 
   if (candidates.length === 0) return null;
 
   // Pick highest scoring candidate
   candidates.sort((a, b) => b.score - a.score);
-  const best = candidates[0];
-
-  const confidence = Math.max(0, 1 - best.distance / MAX_SEAT_DISTANCE);
-
-  return {
-    seat: best.seat,
-    confidence,
-    relX: best.relX,
-    relY: best.relY,
-  };
+  return candidates[0].seat;
 }

@@ -4,8 +4,18 @@ import { cropCorner, matchCard } from "./match";
 import { preprocessCrop } from "./preprocess";
 import { detectActionButtons } from "./buttons";
 import { detectDealerButton } from "./dealer-button";
-import { heroPosition } from "./position";
-import type { CardMatch, DetectionResult } from "./types";
+import type { CardMatch, DetectionResult, Position } from "./types";
+
+/**
+ * Position labels in clockwise order from dealer button.
+ * Index 0 = dealer (BTN), 1 = SB, 2 = BB, 3 = UTG, 4 = MP, 5 = CO.
+ */
+const POSITIONS_6MAX: Position[] = ["BTN", "SB", "BB", "UTG", "MP", "CO"];
+
+/** Map dealer seat number (0-5) to hero's position label. */
+export function heroPosition(dealerSeat: number): Position {
+  return POSITIONS_6MAX[(6 - dealerSeat) % 6];
+}
 
 /** Detect cards from a base64-encoded screenshot. */
 export async function detectCards(base64: string): Promise<DetectionResult> {
@@ -49,12 +59,12 @@ export async function detectCards(base64: string): Promise<DetectionResult> {
   }
 
   const timing = Math.round(performance.now() - start);
-  const position = dealerResult ? heroPosition(dealerResult.seat) : null;
+  const position = dealerResult !== null ? heroPosition(dealerResult) : null;
 
   return {
     heroCards,
     communityCards,
-    detectedText: formatDetectedCards(heroCards, communityCards, position),
+    detectedText: formatDetectionSummary(heroCards, communityCards, position),
     heroTurn,
     heroPosition: position,
     timing,
@@ -62,15 +72,16 @@ export async function detectCards(base64: string): Promise<DetectionResult> {
 }
 
 /**
- * Format detected cards for Claude's system prompt.
+ * Format detection summary for Claude's system prompt.
  *
+ * Includes position, hero cards, and community cards.
  * Only HIGH/MEDIUM confidence cards are included. Cards that couldn't
  * be matched are omitted — Claude reads them from the image naturally.
  */
-function formatDetectedCards(
+function formatDetectionSummary(
   hero: CardMatch[],
   community: CardMatch[],
-  position: import("./types").Position | null,
+  position: Position | null,
 ): string {
   if (hero.length === 0 && community.length === 0 && !position) return "";
 
