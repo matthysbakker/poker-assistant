@@ -27,9 +27,9 @@ export function PersonaComparison({
     <div>
       <div className="mb-3 flex items-center gap-2">
         <h3 className="text-sm font-semibold text-zinc-400">
-          What Would They Do?
+          Strategy Comparison
         </h3>
-        <span className="text-xs text-zinc-600">Opening ranges</span>
+        <span className="text-xs text-zinc-600">Profitable opening ranges</span>
       </div>
       <div className="grid grid-cols-2 gap-3">
         {recommendations.map(({ persona, action }) => {
