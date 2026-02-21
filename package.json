@@ -12,7 +12,8 @@
     "cards:extract": "bun run scripts/extract-corners.ts",
     "cards:label": "bun run scripts/label-card.ts",
     "cards:status": "bun run scripts/check-references.ts",
-    "cards:test": "bun run scripts/test-detection.ts"
+    "cards:test": "bun run scripts/test-detection.ts",
+    "generate-charts": "bun run scripts/generate-charts.ts"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.44",
