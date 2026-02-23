@@ -302,6 +302,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return;
   }
 
+  if (message.type === "CLAUDE_ADVICE") {
+    if (pokerTabId) {
+      chrome.tabs.sendMessage(pokerTabId, {
+        type: "CLAUDE_ADVICE",
+        action: message.action,
+        amount: message.amount,
+        street: message.street,
+        boardTexture: message.boardTexture,
+        spr: message.spr,
+      });
+    }
+    return;
+  }
+
   if (message.type === "AUTOPILOT_DEBUG") {
     // Log full state to background console
     console.log("[BG] Debug:", message.data?.type);
