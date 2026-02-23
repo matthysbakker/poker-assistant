@@ -46,9 +46,6 @@ export async function POST(req: Request) {
     return Response.json(object);
   } catch (err) {
     console.error("[autopilot] Claude API error:", err);
-    return Response.json(
-      { action: "FOLD", amount: null, reasoning: "API error — auto-fold" },
-      { status: 200 },
-    );
+    return Response.json({ error: "Claude API unavailable" }, { status: 503 });
   }
 }

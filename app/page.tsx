@@ -1,6 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { deriveTableTemperature } from "@/lib/poker/table-temperature";
+import { selectPersona } from "@/lib/poker/persona-selector";
+import type { SelectedPersona } from "@/lib/poker/persona-selector";
+import type { TableProfile } from "@/lib/poker/table-temperature";
 import { PasteZone } from "@/components/analyzer/PasteZone";
 import { AnalysisResult } from "@/components/analyzer/AnalysisResult";
 import { DetectionSummary } from "@/components/analyzer/DetectionSummary";
@@ -90,6 +94,52 @@ export default function Home() {
     setOpponentHistory(undefined);
     setSessionHandCount(0);
   }, []);
+
+  // Persona auto-selection — locked per hand, computed at PREFLOP start
+  const [selectedPersona, setSelectedPersona] = useState<SelectedPersona | null>(null);
+  const [tableProfile, setTableProfile] = useState<TableProfile | undefined>(undefined);
+  const prevStreetRef = useRef(handState.street);
+
+  useEffect(() => {
+    const prev = prevStreetRef.current;
+    prevStreetRef.current = handState.street;
+
+    if (handState.street === "PREFLOP" && prev === "WAITING") {
+      // New hand starting — compute and lock persona for this hand
+      const session = getSession();
+      const profile = deriveTableTemperature(session.opponents);
+      setTableProfile(profile);
+
+      const heroCardsStr = handState.heroCards.join(" ");
+      if (handState.heroPosition && heroCardsStr) {
+        const selection = selectPersona(
+          profile.temperature,
+          heroCardsStr,
+          handState.heroPosition,
+        );
+        setSelectedPersona(selection);
+
+        // Notify extension overlay
+        if (selection) {
+          window.postMessage(
+            {
+              source: "poker-assistant-app",
+              type: "PERSONA_RECOMMENDATION",
+              personaName: selection.persona.name,
+              action: selection.action,
+              temperature: profile.temperature,
+            },
+            window.location.origin,
+          );
+        }
+      }
+    } else if (handState.street === "WAITING") {
+      // Hand ended — clear lock
+      setSelectedPersona(null);
+      setTableProfile(undefined);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [handState.street]);
 
   const isContinuous = captureMode === "continuous";
   const showStreetBadge = isContinuous && handState.street !== "WAITING";
@@ -210,6 +260,9 @@ export default function Home() {
           onHandSaved={handleHandSaved}
           onOpponentsDetected={handleOpponentsDetected}
           onAnalysisComplete={markAnalysisComplete}
+          recommendedPersonaId={selectedPersona?.persona.id}
+          tableTemperature={tableProfile}
+          rotated={selectedPersona?.rotated}
         />
 
         {/* Reset button */}

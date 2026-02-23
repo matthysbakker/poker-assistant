@@ -187,8 +187,9 @@ function buildChart(
 }
 
 // ─── Persona Range Definitions ───
-// Based on Sklansky-Malmuth groups + standard opening range theory.
-// VPIP targets are documented in the brainstorm.
+// All 4 personas represent profitable archetypes — strategies that make money
+// over many sessions. Based on modern poker theory and GTO research.
+// See docs/brainstorms/2026-02-19-profitable-poker-personas-brainstorm.md
 
 interface RangeDef {
   raise: string;
@@ -197,119 +198,123 @@ interface RangeDef {
 
 type PersonaRanges = Record<Position, RangeDef>;
 
-// ── Steady Sal (Nit) ~10% VPIP ──
-// Very tight, mostly raises, rarely just calls.
-const SAL: PersonaRanges = {
+// ── GTO Grinder ~23% VPIP ──
+// Solver-balanced ranges with proper bluff:value ratios.
+// Includes blocker aces (A5s/A4s) that other styles skip.
+const GTO_GRINDER: PersonaRanges = {
   UTG: {
-    raise: "TT+, AKs, AQs, AKo",
-    call: "99, AJs",
+    raise: "77+, ATs+, A5s-A4s, KQs, KJs, QJs, JTs, AKo, AQo",
+    call: "",
   },
   MP: {
-    raise: "99+, AKs, AQs, AJs, AKo",
-    call: "88, ATs, AQo",
+    raise: "66+, A8s+, A5s-A4s, KTs+, QTs+, JTs, T9s, AKo, AQo, AJo",
+    call: "",
   },
   CO: {
-    raise: "88+, AJs+, ATs, KQs, AKo, AQo",
-    call: "77, A9s, KJs, AJo",
+    raise: "44+, A2s+, K9s+, Q9s+, J9s+, T9s, 98s, 87s, 76s, ATo+, KJo+, QJo",
+    call: "",
   },
   BTN: {
-    raise: "77+, ATs+, A5s-A4s, KQs, KJs, QJs, AKo, AQo, AJo",
-    call: "66, A9s, KTs, QTs, ATo",
+    raise: "22+, A2s+, K5s+, Q7s+, J8s+, T8s+, 97s+, 86s+, 75s+, 65s, 54s, A7o+, K9o+, QTo+, JTo",
+    call: "",
   },
   SB: {
-    raise: "99+, AJs+, KQs, AKo, AQo",
-    call: "88, ATs, KJs",
+    raise: "55+, A7s+, A5s-A4s, KTs+, QTs+, JTs, T9s, 98s, ATo+, KJo+, QJo",
+    call: "",
   },
   BB: {
-    raise: "TT+, AKs, AQs, AKo",
-    call: "88-99, AJs, ATs, KQs, KJs, QJs, AQo",
+    raise: "88+, ATs+, KQs, AKo, AQo",
+    call: "22-77, A2s-A9s, K8s+, Q9s+, J9s+, T9s, 98s, 87s, 76s, A9o-ATo, KTo+, QJo, JTo",
   },
 };
 
-// ── Sharp Eddie (TAG) ~20% VPIP ──
-// Selective but aggressive. Widens significantly in late position.
-const EDDIE: PersonaRanges = {
+// ── TAG Shark ~20% VPIP ──
+// Tight, linear, value-heavy. Every hand played is strong.
+// The baseline winning style — consistent and disciplined.
+const TAG_SHARK: PersonaRanges = {
   UTG: {
     raise: "77+, ATs+, KQs, AKo, AQo",
-    call: "66, A9s, KJs, AJo",
+    call: "",
   },
   MP: {
     raise: "66+, A9s+, KJs+, QJs, AKo, AQo, AJo",
-    call: "55, A8s, KTs, QTs, KQo",
+    call: "",
   },
   CO: {
-    raise: "55+, A7s+, K9s+, QTs+, JTs, T9s, ATo+, KQo, KJo",
-    call: "44, A5s-A6s, K8s, Q9s, J9s, QJo",
+    raise: "44+, A7s+, K9s+, QTs+, JTs, T9s, ATo+, KJo+, QJo",
+    call: "",
   },
   BTN: {
-    raise: "33+, A2s+, K7s+, Q9s+, J9s+, T9s, 98s, 87s, A8o+, KTo+, QJo, QTo",
-    call: "22, K5s-K6s, Q8s, J8s, T8s, 97s, 76s, A7o, K9o, JTo",
+    raise: "22+, A2s+, K7s+, Q9s+, J9s+, T8s+, 98s, 87s, 76s, A8o+, KTo+, QTo+, JTo",
+    call: "",
   },
   SB: {
-    raise: "66+, A8s+, KTs+, QJs, ATo+, KQo, KJo",
-    call: "55, A5s-A7s, K9s, QTs, JTs, AJo, QJo",
+    raise: "66+, A8s+, KTs+, QJs, JTs, ATo+, KQo",
+    call: "",
   },
   BB: {
-    raise: "88+, ATs+, KQs, AKo, AQo",
-    call: "22-77, A2s-A9s, K8s+, Q9s+, J9s+, T9s, 98s, 87s, ATo+, KJo+, QJo",
+    raise: "99+, AJs+, KQs, AKo",
+    call: "22-88, A2s-ATs, K9s+, Q9s+, J9s+, T9s, 98s, 87s, A9o-AJo, KTo+, QJo, JTo",
   },
 };
 
-// ── Wild Maya (LAG) ~30% VPIP ──
-// Wide ranges, raises a lot. Puts constant pressure.
-const MAYA: PersonaRanges = {
+// ── LAG Assassin ~30% VPIP ──
+// Wide ranges, relentless pressure. Raises or folds — almost never calls.
+// Includes suited gappers and connectors other styles skip.
+const LAG_ASSASSIN: PersonaRanges = {
   UTG: {
-    raise: "55+, A7s+, K9s+, QTs+, JTs, T9s, ATo+, KJo+",
-    call: "44, A5s-A6s, K8s, Q9s, J9s, 98s, KTo, QJo",
+    raise: "55+, A5s+, K9s+, QTs+, JTs, T9s, 98s, ATo+, KJo+",
+    call: "",
   },
   MP: {
-    raise: "44+, A4s+, K8s+, Q9s+, J9s+, T9s, 98s, A9o+, KTo+, QJo",
-    call: "33, A2s-A3s, K7s, Q8s, J8s, T8s, 87s, A8o, K9o, QTo, JTo",
+    raise: "33+, A3s+, K7s+, Q9s+, J9s+, T9s, 98s, 87s, 76s, A9o+, KTo+, QJo",
+    call: "",
   },
   CO: {
-    raise: "33+, A2s+, K5s+, Q8s+, J8s+, T8s+, 97s+, 87s, 76s, A7o+, K9o+, QTo+, JTo",
-    call: "22, K2s-K4s, Q5s-Q7s, J7s, T7s, 96s, 86s, 75s, 65s, A5o-A6o, K8o, Q9o, J9o",
+    raise: "22+, A2s+, K5s+, Q7s+, J8s+, T8s+, 97s+, 86s+, 75s+, 65s, 54s, A7o+, K9o+, QTo+, JTo",
+    call: "",
   },
   BTN: {
-    raise: "22+, A2s+, K2s+, Q5s+, J7s+, T7s+, 96s+, 86s+, 75s+, 65s, 54s, A2o+, K7o+, Q9o+, J9o+, T9o",
-    call: "Q2s-Q4s, J5s-J6s, T6s, 95s, 85s, 74s, 64s, 53s, K5o-K6o, Q8o, J8o, T8o, 98o",
+    raise: "22+, A2s+, K2s+, Q4s+, J7s+, T7s+, 96s+, 86s+, 75s+, 64s+, 54s, 43s, A2o+, K7o+, Q9o+, J9o+, T9o",
+    call: "",
   },
   SB: {
-    raise: "44+, A2s+, K7s+, Q9s+, J9s+, T9s, 98s, 87s, A8o+, KTo+, QJo",
-    call: "33, K4s-K6s, Q7s-Q8s, J8s, T8s, 97s, 76s, 65s, A5o-A7o, K9o, QTo, JTo",
+    raise: "33+, A2s+, K7s+, Q9s+, J9s+, T9s, 98s, 87s, A8o+, KTo+, QJo",
+    call: "",
   },
   BB: {
-    raise: "77+, A8s+, KTs+, QJs, ATo+, KJo+",
-    call: "22-66, A2s-A7s, K4s-K9s, Q7s+, J8s+, T8s+, 97s+, 87s, 76s, 65s, A2o-A9o, K8o+, Q9o+, J9o+, T9o",
+    raise: "77+, A9s+, KJs+, QJs, AKo, AQo, AJo",
+    call: "22-66, A2s-A8s, K5s+, Q7s+, J8s+, T8s+, 97s+, 86s+, 75s+, 65s, 54s, A2o+, K9o+, QTo+, JTo, T9o",
   },
 };
 
-// ── Curious Carl (Calling Station) ~45% VPIP ──
-// Sees lots of flops, mostly by calling. Large VPIP-PFR gap.
-const CARL: PersonaRanges = {
+// ── Exploit Hawk ~22% VPIP ──
+// TAG core with much wider steals in CO/BTN/SB.
+// Tight EP (no marginal opens), wide LP (exploits fold-heavy blinds).
+const EXPLOIT_HAWK: PersonaRanges = {
   UTG: {
-    raise: "88+, ATs+, KQs, AKo",
-    call: "22-77, A2s-A9s, K8s+, Q9s+, J9s+, T9s, 98s, 87s, A9o+, KTo+, QJo",
+    raise: "77+, ATs+, KQs, AKo, AQo",
+    call: "",
   },
   MP: {
-    raise: "99+, ATs+, KQs, AKo, AQo",
-    call: "22-88, A2s-A9s, K5s+, Q8s+, J8s+, T8s+, 97s+, 87s, 76s, A7o+, K9o+, QTo+, JTo",
+    raise: "66+, A9s+, KJs+, QJs, AKo, AQo, AJo",
+    call: "",
   },
   CO: {
-    raise: "88+, ATs+, KQs, AKo, AQo",
-    call: "22-77, A2s-A9s, K2s+, Q5s+, J7s+, T7s+, 96s+, 86s+, 75s+, 65s, 54s, A2o+, K7o+, Q9o+, J9o+, T9o",
+    raise: "33+, A2s+, K8s+, Q9s+, J9s+, T9s, 98s, 87s, 76s, A9o+, KTo+, QJo, JTo",
+    call: "",
   },
   BTN: {
-    raise: "77+, A9s+, KJs+, AKo, AQo, AJo",
-    call: "22-66, A2s-A8s, K2s+, Q2s+, J5s+, T6s+, 95s+, 85s+, 74s+, 64s+, 53s+, 43s, A2o+, K2o+, Q7o+, J8o+, T8o+, 98o",
+    raise: "22+, A2s+, K4s+, Q6s+, J7s+, T7s+, 96s+, 85s+, 75s+, 65s, 54s, A5o+, K9o+, QTo+, J9o+, T9o",
+    call: "",
   },
   SB: {
-    raise: "88+, ATs+, KQs, AKo, AQo",
-    call: "22-77, A2s-A9s, K6s+, Q8s+, J8s+, T8s+, 97s+, 87s, 76s, 65s, A5o+, K9o+, QTo+, JTo, T9o",
+    raise: "44+, A4s+, K8s+, QTs+, JTs, T9s, 98s, 87s, A9o+, KTo+, QJo",
+    call: "",
   },
   BB: {
-    raise: "TT+, AQs+, AKo",
-    call: "22-99, A2s-AJs, K2s+, Q4s+, J6s+, T6s+, 95s+, 85s+, 74s+, 64s+, 53s+, 43s, A2o+, K5o+, Q8o+, J8o+, T8o+, 97o+, 87o, 76o",
+    raise: "88+, ATs+, KQs, AKo, AQo",
+    call: "22-77, A2s-A9s, K8s+, Q9s+, J9s+, T9s, 98s, 87s, 76s, A8o-ATo, KTo+, QJo, JTo",
   },
 };
 
@@ -319,38 +324,38 @@ interface PersonaDef {
   id: string;
   name: string;
   tagline: string;
-  playerType: string;
+  style: string;
   ranges: PersonaRanges;
 }
 
 const PERSONA_DEFS: PersonaDef[] = [
   {
-    id: "steady_sal",
-    name: "Steady Sal",
-    tagline: "Only plays the nuts",
-    playerType: "TIGHT_PASSIVE",
-    ranges: SAL,
+    id: "gto_grinder",
+    name: "GTO Grinder",
+    tagline: "Balanced ranges, no exploitable leaks",
+    style: "gto",
+    ranges: GTO_GRINDER,
   },
   {
-    id: "sharp_eddie",
-    name: "Sharp Eddie",
-    tagline: "Selective but strikes hard",
-    playerType: "TIGHT_AGGRESSIVE",
-    ranges: EDDIE,
+    id: "tag_shark",
+    name: "TAG Shark",
+    tagline: "Premium hands, maximum aggression",
+    style: "tag",
+    ranges: TAG_SHARK,
   },
   {
-    id: "wild_maya",
-    name: "Wild Maya",
+    id: "lag_assassin",
+    name: "LAG Assassin",
     tagline: "Wide ranges, relentless pressure",
-    playerType: "LOOSE_AGGRESSIVE",
-    ranges: MAYA,
+    style: "lag",
+    ranges: LAG_ASSASSIN,
   },
   {
-    id: "curious_carl",
-    name: "Curious Carl",
-    tagline: "Can't resist seeing a flop",
-    playerType: "LOOSE_PASSIVE",
-    ranges: CARL,
+    id: "exploit_hawk",
+    name: "Exploit Hawk",
+    tagline: "Adapts to the table, steals relentlessly",
+    style: "exploit",
+    ranges: EXPLOIT_HAWK,
   },
 ];
 
@@ -399,7 +404,7 @@ for (const persona of PERSONA_DEFS) {
     id: "${persona.id}",
     name: "${persona.name}",
     tagline: "${persona.tagline}",
-    playerType: "${persona.playerType}",
+    style: "${persona.style}",
     charts: {
 ${chartsEntries.join(",\n")}
     }
@@ -420,7 +425,7 @@ export interface Persona {
   id: string;
   name: string;
   tagline: string;
-  playerType: "TIGHT_PASSIVE" | "TIGHT_AGGRESSIVE" | "LOOSE_AGGRESSIVE" | "LOOSE_PASSIVE";
+  style: string;
   charts: Record<ChartPosition, Record<string, PersonaAction>>;
 }
 

@@ -12,6 +12,7 @@ import { LoadingState } from "./LoadingState";
 import { OpponentTable } from "./OpponentTable";
 import { PersonaComparison } from "./PersonaComparison";
 import type { ChartPosition } from "@/lib/poker/personas";
+import type { TableProfile } from "@/lib/poker/table-temperature";
 
 interface AnalysisResultProps {
   imageBase64: string | null;
@@ -24,6 +25,9 @@ interface AnalysisResultProps {
   onHandSaved?: () => void;
   onOpponentsDetected?: (opponents: Opponent[]) => void;
   onAnalysisComplete?: () => void;
+  recommendedPersonaId?: string;
+  tableTemperature?: TableProfile;
+  rotated?: boolean;
 }
 
 export function AnalysisResult({
@@ -34,6 +38,9 @@ export function AnalysisResult({
   onHandSaved,
   onOpponentsDetected,
   onAnalysisComplete,
+  recommendedPersonaId,
+  tableTemperature,
+  rotated,
 }: AnalysisResultProps) {
   const { object, submit, isLoading, error } = useObject({
     api: "/api/analyze",
@@ -183,6 +190,9 @@ export function AnalysisResult({
           heroCards={object.heroCards}
           heroPosition={object.heroPosition as ChartPosition}
           aiAction={object.action}
+          recommendedPersonaId={recommendedPersonaId}
+          tableTemperature={tableTemperature}
+          rotated={rotated}
         />
       )}
 

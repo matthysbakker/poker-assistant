@@ -65,7 +65,14 @@ const SUIT_MAP: Record<string, string> = {
 
 // ── State ──────────────────────────────────────────────────────────────
 
+interface PersonaRec {
+  name: string;
+  action: string;
+  temperature: string;
+}
+
 let autopilotMode: "off" | "monitor" | "play" = "off";
+let lastPersonaRec: PersonaRec | null = null;
 let executing = false;
 let currentHandId: string | null = null;
 let handMessages: Array<{ role: "user" | "assistant"; content: string }> = [];
@@ -131,7 +138,17 @@ chrome.runtime.onMessage.addListener((message) => {
       startObserving();
     }
   }
+
+  // Persona recommendation relayed from the web app via background (todo 050)
+  if (message.type === "PERSONA_RECOMMENDATION") {
+    lastPersonaRec = {
+      name: message.personaName,
+      action: message.action,
+      temperature: message.temperature,
+    };
+  }
 });
+
 
 // ── DOM Scraping ───────────────────────────────────────────────────────
 
@@ -654,6 +671,15 @@ function onDecisionReceived(action: AutopilotAction) {
 
 // ── Monitor Overlay ────────────────────────────────────────────────────
 
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 let overlayEl: HTMLElement | null = null;
 
 function getOverlay(): HTMLElement {
@@ -677,6 +703,7 @@ function updateOverlay(state: GameState) {
       overlayEl.remove();
       overlayEl = null;
     }
+    lastPersonaRec = null;
     return;
   }
 
@@ -684,21 +711,34 @@ function updateOverlay(state: GameState) {
   const modeLabel = autopilotMode === "play" ? "PLAY" : "MONITOR";
   const modeColor = autopilotMode === "play" ? "#c084fc" : "#60a5fa";
 
-  const hero = state.heroCards.length > 0 ? state.heroCards.join(" ") : "—";
-  const board = state.communityCards.length > 0 ? state.communityCards.join(" ") : "—";
-  const actions = state.availableActions.map((a) => a.label).join(" | ") || "—";
+  const hero = state.heroCards.length > 0 ? escapeHtml(state.heroCards.join(" ")) : "—";
+  const board = state.communityCards.length > 0 ? escapeHtml(state.communityCards.join(" ")) : "—";
+  const actions = escapeHtml(state.availableActions.map((a) => a.label).join(" | ") || "—");
   const turn = state.isHeroTurn ? "YES" : "no";
   const turnColor = state.isHeroTurn ? "#4ade80" : "#71717a";
 
+  // Persona line — shown preflop only (no community cards yet)
+  const isPreflop = state.communityCards.length === 0 && state.heroCards.length > 0;
+  const personaHtml = isPreflop && lastPersonaRec
+    ? `<div style="border-top:1px solid #3f3f46;margin-top:6px;padding-top:6px">
+         <span style="color:#818cf8;font-weight:bold">${escapeHtml(lastPersonaRec.name)}</span>
+         <span style="color:#e4e4e7"> → ${escapeHtml(lastPersonaRec.action)}</span>
+         <span style="color:#52525b"> [${escapeHtml(lastPersonaRec.temperature.replaceAll("_", "-"))}]</span>
+       </div>`
+    : isPreflop
+      ? `<div style="border-top:1px solid #3f3f46;margin-top:6px;padding-top:6px;color:#52525b">Persona: —</div>`
+      : "";
+
   el.innerHTML = `
     <div style="color:${modeColor};font-weight:bold;margin-bottom:4px">${modeLabel}</div>
-    <div>Hand: ${state.handId || "—"}</div>
+    <div>Hand: ${escapeHtml(state.handId || "—")}</div>
     <div>Hero: <b>${hero}</b></div>
     <div>Board: ${board}</div>
-    <div>Pot: ${state.pot || "—"}</div>
+    <div>Pot: ${escapeHtml(state.pot || "—")}</div>
     <div>Turn: <span style="color:${turnColor}">${turn}</span></div>
     <div>Actions: ${actions}</div>
     <div style="color:#71717a;margin-top:4px">Players: ${state.players.filter((p) => p.name).length}</div>
+    ${personaHtml}
   `;
 }
 
@@ -769,6 +809,7 @@ function processGameState() {
     executing = false;
     lastHeroTurn = false;
     streetActions = [];
+    lastPersonaRec = null;
 
     if (state.heroCards.length > 0) {
       handMessages.push({
