@@ -4,6 +4,7 @@ import { useCallback, useReducer } from "react";
 import { handReducer, INITIAL_STATE } from "./state-machine";
 import type { DetectionResult } from "@/lib/card-detection/types";
 import type { HandState } from "./types";
+import type { HandAnalysis } from "@/lib/ai/schema";
 
 export function useHandTracker() {
   const [state, dispatch] = useReducer(handReducer, INITIAL_STATE);
@@ -16,8 +17,8 @@ export function useHandTracker() {
     dispatch({ type: "ANALYSIS_STARTED" });
   }, []);
 
-  const markAnalysisComplete = useCallback(() => {
-    dispatch({ type: "ANALYSIS_COMPLETE" });
+  const markAnalysisComplete = useCallback((analysis?: HandAnalysis) => {
+    dispatch({ type: "ANALYSIS_COMPLETE", analysis });
   }, []);
 
   const reset = useCallback(() => {
@@ -44,13 +45,19 @@ export function buildHandContext(state: HandState): string {
     parts.push(`Hero position: ${state.heroPosition}`);
   }
 
-  parts.push(
-    ...state.streets.map((snap) =>
-      snap.street === "PREFLOP"
-        ? `PREFLOP: Hero holds ${snap.heroCards.join(" ")}`
-        : `${snap.street}: Board is ${snap.communityCards.join(" ")}`,
-    ),
-  );
+  for (const snap of state.streets) {
+    if (snap.street === "PREFLOP") {
+      parts.push(`PREFLOP: Hero holds ${snap.heroCards.join(" ")}`);
+    } else if (snap.communityCards.length > 0) {
+      parts.push(`${snap.street}: Board is ${snap.communityCards.join(" ")}`);
+    }
+    // Append prior Claude recommendation for continuity across streets
+    if (snap.analysis?.action) {
+      const rec = `${snap.analysis.action}${snap.analysis.amount ? ` ${snap.analysis.amount}` : ""}`;
+      const reasoning = snap.analysis.reasoning?.slice(0, 120);
+      parts.push(`  → Claude recommended: ${rec}${reasoning ? ` (${reasoning}…)` : ""}`);
+    }
+  }
 
   return parts.join(". ");
 }

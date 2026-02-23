@@ -58,8 +58,16 @@ export function handReducer(state: HandState, action: HandAction): HandState {
       return handleDetection(state, action.detection);
     case "ANALYSIS_STARTED":
       return { ...state, analyzing: true };
-    case "ANALYSIS_COMPLETE":
-      return { ...state, analyzing: false };
+    case "ANALYSIS_COMPLETE": {
+      if (!action.analysis) return { ...state, analyzing: false };
+      return {
+        ...state,
+        analyzing: false,
+        streets: state.streets.map((s) =>
+          s.street === state.street ? { ...s, analysis: action.analysis } : s,
+        ),
+      };
+    }
     case "RESET":
       return { ...INITIAL_STATE };
     default:

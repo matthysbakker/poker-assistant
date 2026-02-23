@@ -46,12 +46,24 @@ POSITION — To determine hero's position:
    - Which positions have tight vs loose players?
    - How does the table dynamic affect optimal play vs GTO?
 
-4. **Recommend an action**: Choose FOLD, CHECK, CALL, BET, or RAISE. If betting or raising, include specific sizing (e.g. "2/3 pot", "3x BB"). Your recommendation should factor in exploit opportunities, not just GTO play.
+3b. **Post-flop analysis** (skip entirely if street is PREFLOP):
+   - **Board texture**: Is the board wet (connected/suited), dry (unconnected/rainbow), paired, or monotone? Wet boards favour the player with more draws.
+   - **Hero's draws**: Identify flush draws (9 outs), open-ended straight draws (8), gutshots (4), combo draws (12-15). Note nut draws vs weak draws.
+   - **Equity estimate**: Estimate hero's equity vs the opponent's likely range given their position and prior actions.
+   - **SPR**: Compute stack-to-pot ratio (effective stack ÷ pot). Low SPR (<4) = commit with strong hands; medium (4-12) = proceed carefully; high (>12) = no commitment needed yet.
+   - **Pot odds** (only if hero faces a bet): State the ratio and the minimum equity needed to call profitably.
+   - **Range advantage**: Which player's range connects better with this board — the preflop aggressor (c-betting range) or the caller (defending/floating range)?
+   - **Facing action**: State clearly what action hero is facing (c-bet, donk, check-raise, or first to act with no bet).
+
+4. **Recommend an action**: Choose FOLD, CHECK, CALL, BET, or RAISE. If betting or raising, include specific sizing. Your recommendation should factor in exploit opportunities, not just GTO play.
+   - **Preflop**: standard sizing (e.g. "2.5x BB open", "3x 3-bet").
+   - **Flop/Turn**: sizing as fraction of pot. Polarized range (strong made hands + bluffs) → larger sizing (3/4 to full pot); linear value range → smaller sizing (1/2 pot); semi-bluffs with strong equity → can bet larger to leverage fold equity.
+   - **River**: polarize — bet near-pot with strong hands or bluffs; check or fold marginal hands.
 
 5. **Explain your reasoning**: Write a clear, step-by-step explanation a beginner can follow. Cover:
    - Hand strength and potential
    - Position considerations
-   - Pot odds if relevant
+   - Pot odds and SPR if relevant (post-flop)
    - How opponent tendencies affect the decision
    - Why alternative actions are worse
 
@@ -106,12 +118,24 @@ POSITION — To determine hero's position:
    - Which positions have tight vs loose players?
    - How does the table dynamic affect optimal play vs GTO?
 
-4. **Recommend an action**: Choose FOLD, CHECK, CALL, BET, or RAISE. If betting or raising, include specific sizing (e.g. "2/3 pot", "3x BB"). Your recommendation should factor in exploit opportunities, not just GTO play.
+3b. **Post-flop analysis** (skip entirely if street is PREFLOP):
+   - **Board texture**: Is the board wet (connected/suited), dry (unconnected/rainbow), paired, or monotone? Wet boards favour the player with more draws.
+   - **Hero's draws**: Identify flush draws (9 outs), open-ended straight draws (8), gutshots (4), combo draws (12-15). Note nut draws vs weak draws.
+   - **Equity estimate**: Estimate hero's equity vs the opponent's likely range given their position and prior actions.
+   - **SPR**: Compute stack-to-pot ratio (effective stack ÷ pot). Low SPR (<4) = commit with strong hands; medium (4-12) = proceed carefully; high (>12) = no commitment needed yet.
+   - **Pot odds** (only if hero faces a bet): State the ratio and the minimum equity needed to call profitably.
+   - **Range advantage**: Which player's range connects better with this board — the preflop aggressor (c-betting range) or the caller (defending/floating range)?
+   - **Facing action**: State clearly what action hero is facing (c-bet, donk, check-raise, or first to act with no bet).
+
+4. **Recommend an action**: Choose FOLD, CHECK, CALL, BET, or RAISE. If betting or raising, include specific sizing. Your recommendation should factor in exploit opportunities, not just GTO play.
+   - **Preflop**: standard sizing (e.g. "2.5x BB open", "3x 3-bet").
+   - **Flop/Turn**: sizing as fraction of pot. Polarized range (strong made hands + bluffs) → larger sizing (3/4 to full pot); linear value range → smaller sizing (1/2 pot); semi-bluffs with strong equity → can bet larger to leverage fold equity.
+   - **River**: polarize — bet near-pot with strong hands or bluffs; check or fold marginal hands.
 
 5. **Explain your reasoning**: Write a clear, step-by-step explanation a beginner can follow. Cover:
    - Hand strength and potential
    - Position considerations
-   - Pot odds if relevant
+   - Pot odds and SPR if relevant (post-flop)
    - How opponent tendencies affect the decision
    - Why alternative actions are worse
 
