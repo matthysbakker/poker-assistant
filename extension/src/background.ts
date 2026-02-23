@@ -7,10 +7,18 @@
  *   POKER_CAPTURE       bg → content     Manual hotkey screenshot (PNG)
  *   CAPTURE_FRAME       bg → content     Continuous capture frame (JPEG 85%)
  *
+ * Background ↔ Poker Content (chrome.runtime messages):
+ *   REGISTER_POKER_TAB    poker-content → bg   Tab registers as the poker tab
+ *   UNREGISTER_POKER_TAB  poker-content → bg   Tab unregisters on unload
+ *   AUTOPILOT_DECIDE      poker-content → bg   Request decision (messages array)
+ *   AUTOPILOT_ACTION      bg → poker-content   Decision result (action object)
+ *   AUTOPILOT_MODE        bg → poker-content   Apply mode change ("off"|"monitor"|"play")
+ *
  * Background ↔ Popup (chrome.runtime messages):
- *   GET_STATUS          popup → bg       Query connection + continuous state
+ *   GET_STATUS          popup → bg       Query connection + continuous + autopilot state
  *   CONTINUOUS_START    popup → bg       Start continuous capture
  *   CONTINUOUS_STOP     popup → bg       Stop continuous capture
+ *   AUTOPILOT_SET_MODE  popup → bg       Set mode: "off" | "monitor" | "play"
  *
  * Content ↔ Page (window.postMessage, source: "poker-assistant-ext"):
  *   EXTENSION_CONNECTED content → page   Extension presence announcement
@@ -29,6 +37,11 @@ const DEBOUNCE_MS = 3000;
 let captureInterval: ReturnType<typeof setInterval> | null = null;
 let pokerWindowId: number | null = null;
 
+// Autopilot state
+let pokerTabId: number | null = null;
+let autopilotMode: "off" | "monitor" | "play" = "off";
+const AUTOPILOT_API_URL = "http://localhost:3006/api/autopilot";
+
 console.log("[BG] Background script started");
 
 let badgeTimeoutId: ReturnType<typeof setTimeout> | null = null;
@@ -43,8 +56,11 @@ function setBadge(text: string, color: string, timeout = 3000) {
   if (timeout > 0) {
     badgeTimeoutId = setTimeout(() => {
       badgeTimeoutId = null;
-      // Restore "ON" badge if continuous capture is still running
-      if (isContinuousActive()) {
+      // Restore persistent badge based on active mode
+      if (autopilotMode !== "off") {
+        chrome.browserAction.setBadgeText({ text: "AP" });
+        chrome.browserAction.setBadgeBackgroundColor({ color: "#8b5cf6" });
+      } else if (isContinuousActive()) {
         chrome.browserAction.setBadgeText({ text: "ON" });
         chrome.browserAction.setBadgeBackgroundColor({ color: "#22c55e" });
       } else {
@@ -111,6 +127,67 @@ function isContinuousActive() {
   return captureInterval !== null;
 }
 
+async function fetchAutopilotDecision(
+  messages: Array<{ role: string; content: string }>,
+) {
+  try {
+    const res = await fetch(AUTOPILOT_API_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ messages }),
+    });
+
+    if (!res.ok) {
+      console.error("[BG] Autopilot API error:", res.status);
+      sendFallbackAction("API returned " + res.status);
+      return;
+    }
+
+    const action = await res.json();
+
+    // Validate shape before forwarding to real-money DOM executor (todo 038)
+    const validActions = ["FOLD", "CHECK", "CALL", "RAISE", "BET"];
+    if (
+      !action ||
+      !validActions.includes(action.action) ||
+      (action.amount !== null && typeof action.amount !== "number") ||
+      typeof action.reasoning !== "string"
+    ) {
+      console.error("[BG] Invalid action shape from API:", action);
+      sendFallbackAction("Invalid action shape");
+      return;
+    }
+
+    console.log(
+      `[BG] Autopilot decision: ${action.action}${action.amount ? ` €${action.amount}` : ""} — ${action.reasoning}`,
+    );
+
+    if (pokerTabId) {
+      chrome.tabs.sendMessage(pokerTabId, {
+        type: "AUTOPILOT_ACTION",
+        action,
+      });
+    }
+  } catch (err) {
+    console.error("[BG] Autopilot fetch failed:", err);
+    sendFallbackAction("Network error");
+  }
+}
+
+function sendFallbackAction(reason: string) {
+  const fallback = {
+    action: "FOLD",
+    amount: null,
+    reasoning: `Auto-fold: ${reason}`,
+  };
+  if (pokerTabId) {
+    chrome.tabs.sendMessage(pokerTabId, {
+      type: "AUTOPILOT_ACTION",
+      action: fallback,
+    });
+  }
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   console.log("[BG] Message:", message.type, "from tab:", sender.tab?.id);
 
@@ -134,11 +211,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     sendResponse({
       connected: webAppTabId !== null,
       continuous: isContinuousActive(),
+      pokerConnected: pokerTabId !== null,
+      autopilotMode,
     });
     return;
   }
 
   if (message.type === "CONTINUOUS_START") {
+    if (autopilotMode !== "off") {
+      console.log("[BG] Ignoring continuous start — autopilot is active");
+      sendResponse({ ok: false, continuous: false });
+      return;
+    }
     startContinuousCapture();
     sendResponse({ ok: true, continuous: true });
     return;
@@ -147,6 +231,72 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === "CONTINUOUS_STOP") {
     stopContinuousCapture();
     sendResponse({ ok: true, continuous: false });
+    return;
+  }
+
+  // ── Autopilot Messages ──────────────────────────────────────────────
+
+  if (message.type === "REGISTER_POKER_TAB" && sender.tab?.id) {
+    pokerTabId = sender.tab.id;
+    console.log("[BG] Poker tab registered:", pokerTabId);
+    // If autopilot was already active (e.g. page reload), re-send mode
+    if (autopilotMode !== "off") {
+      chrome.tabs.sendMessage(pokerTabId, {
+        type: "AUTOPILOT_MODE",
+        mode: autopilotMode,
+      });
+    }
+    sendResponse({ ok: true });
+    return;
+  }
+
+  if (message.type === "UNREGISTER_POKER_TAB") {
+    if (sender.tab?.id === pokerTabId) {
+      pokerTabId = null;
+      console.log("[BG] Poker tab unregistered");
+    }
+    return;
+  }
+
+  if (message.type === "AUTOPILOT_SET_MODE") {
+    const newMode = message.mode as "off" | "monitor" | "play";
+    if (newMode !== "off" && isContinuousActive()) {
+      stopContinuousCapture();
+      console.log("[BG] Stopped continuous capture for autopilot");
+    }
+    autopilotMode = newMode;
+    console.log("[BG] Autopilot mode:", autopilotMode);
+    if (pokerTabId) {
+      chrome.tabs.sendMessage(pokerTabId, {
+        type: "AUTOPILOT_MODE",
+        mode: autopilotMode,
+      });
+    }
+    if (autopilotMode === "play") {
+      setBadge("AP", "#8b5cf6", 0);
+    } else if (autopilotMode === "monitor") {
+      setBadge("MN", "#3b82f6", 0);
+    } else {
+      chrome.browserAction.setBadgeText({ text: "" });
+    }
+    sendResponse({ ok: true, autopilotMode });
+    return;
+  }
+
+  if (message.type === "AUTOPILOT_DECIDE") {
+    console.log("[BG] Autopilot decision requested");
+    fetchAutopilotDecision(message.messages);
+    return;
+  }
+
+  if (message.type === "AUTOPILOT_DEBUG") {
+    // Log full state to background console
+    console.log("[BG] Debug:", message.data?.type);
+    console.log("[BG] State:", JSON.stringify(message.data?.state, null, 2));
+    if (message.data?.dom) {
+      console.log("[BG] Hero DOM:", message.data.dom.heroCards);
+      console.log("[BG] Actions DOM:", message.data.dom.actionsArea);
+    }
     return;
   }
 });
