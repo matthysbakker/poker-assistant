@@ -65,7 +65,14 @@ const SUIT_MAP: Record<string, string> = {
 
 // ── State ──────────────────────────────────────────────────────────────
 
+interface PersonaRec {
+  name: string;
+  action: string;
+  temperature: string;
+}
+
 let autopilotMode: "off" | "monitor" | "play" = "off";
+let lastPersonaRec: PersonaRec | null = null;
 let executing = false;
 let currentHandId: string | null = null;
 let handMessages: Array<{ role: "user" | "assistant"; content: string }> = [];
@@ -130,6 +137,21 @@ chrome.runtime.onMessage.addListener((message) => {
     if (autopilotMode !== "off") {
       startObserving();
     }
+  }
+});
+
+// ── Page Message Listener (receives PERSONA_RECOMMENDATION from poker-assistant app) ──
+
+window.addEventListener("message", (event) => {
+  if (event.origin !== window.location.origin) return;
+  if (event.data?.source !== "poker-assistant-app") return;
+
+  if (event.data.type === "PERSONA_RECOMMENDATION") {
+    lastPersonaRec = {
+      name: event.data.personaName,
+      action: event.data.action,
+      temperature: event.data.temperature,
+    };
   }
 });
 
@@ -677,6 +699,7 @@ function updateOverlay(state: GameState) {
       overlayEl.remove();
       overlayEl = null;
     }
+    lastPersonaRec = null;
     return;
   }
 
@@ -690,6 +713,18 @@ function updateOverlay(state: GameState) {
   const turn = state.isHeroTurn ? "YES" : "no";
   const turnColor = state.isHeroTurn ? "#4ade80" : "#71717a";
 
+  // Persona line — shown preflop only (no community cards yet)
+  const isPreflop = state.communityCards.length === 0 && state.heroCards.length > 0;
+  const personaHtml = isPreflop && lastPersonaRec
+    ? `<div style="border-top:1px solid #3f3f46;margin-top:6px;padding-top:6px">
+         <span style="color:#818cf8;font-weight:bold">${lastPersonaRec.name}</span>
+         <span style="color:#e4e4e7"> → ${lastPersonaRec.action}</span>
+         <span style="color:#52525b"> [${lastPersonaRec.temperature.replace("_", "-")}]</span>
+       </div>`
+    : isPreflop
+      ? `<div style="border-top:1px solid #3f3f46;margin-top:6px;padding-top:6px;color:#52525b">Persona: —</div>`
+      : "";
+
   el.innerHTML = `
     <div style="color:${modeColor};font-weight:bold;margin-bottom:4px">${modeLabel}</div>
     <div>Hand: ${state.handId || "—"}</div>
@@ -699,6 +734,7 @@ function updateOverlay(state: GameState) {
     <div>Turn: <span style="color:${turnColor}">${turn}</span></div>
     <div>Actions: ${actions}</div>
     <div style="color:#71717a;margin-top:4px">Players: ${state.players.filter((p) => p.name).length}</div>
+    ${personaHtml}
   `;
 }
 
