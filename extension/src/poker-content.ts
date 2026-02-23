@@ -71,8 +71,17 @@ interface PersonaRec {
   temperature: string;
 }
 
+interface ClaudeAdvice {
+  action: string;
+  amount: string | null;
+  street: string | null;
+  boardTexture: string | null;
+  spr: string | null;
+}
+
 let autopilotMode: "off" | "monitor" | "play" = "off";
 let lastPersonaRec: PersonaRec | null = null;
+let lastClaudeAdvice: ClaudeAdvice | null = null;
 let executing = false;
 let currentHandId: string | null = null;
 let handMessages: Array<{ role: "user" | "assistant"; content: string }> = [];
@@ -145,6 +154,17 @@ chrome.runtime.onMessage.addListener((message) => {
       name: message.personaName,
       action: message.action,
       temperature: message.temperature,
+    };
+  }
+
+  // Claude's completed advice relayed from the web app
+  if (message.type === "CLAUDE_ADVICE") {
+    lastClaudeAdvice = {
+      action: message.action,
+      amount: message.amount ?? null,
+      street: message.street ?? null,
+      boardTexture: message.boardTexture ?? null,
+      spr: message.spr ?? null,
     };
   }
 });
@@ -729,6 +749,21 @@ function updateOverlay(state: GameState) {
       ? `<div style="border-top:1px solid #3f3f46;margin-top:6px;padding-top:6px;color:#52525b">Persona: —</div>`
       : "";
 
+  // Claude advice line — shown for all streets when available
+  const adviceRec = lastClaudeAdvice?.action
+    ? lastClaudeAdvice.action + (lastClaudeAdvice.amount ? ` ${lastClaudeAdvice.amount}` : "")
+    : null;
+  const adviceExtra = !isPreflop && lastClaudeAdvice?.boardTexture
+    ? ` | ${escapeHtml(lastClaudeAdvice.boardTexture)}${lastClaudeAdvice.spr ? ` | SPR ${escapeHtml(lastClaudeAdvice.spr)}` : ""}`
+    : "";
+  const claudeHtml = adviceRec
+    ? `<div style="border-top:1px solid #3f3f46;margin-top:6px;padding-top:6px">
+         <span style="color:#71717a">AI: </span>
+         <span style="color:#4ade80;font-weight:bold">${escapeHtml(adviceRec)}</span>
+         <span style="color:#52525b">${adviceExtra}</span>
+       </div>`
+    : "";
+
   el.innerHTML = `
     <div style="color:${modeColor};font-weight:bold;margin-bottom:4px">${modeLabel}</div>
     <div>Hand: ${escapeHtml(state.handId || "—")}</div>
@@ -739,6 +774,7 @@ function updateOverlay(state: GameState) {
     <div>Actions: ${actions}</div>
     <div style="color:#71717a;margin-top:4px">Players: ${state.players.filter((p) => p.name).length}</div>
     ${personaHtml}
+    ${claudeHtml}
   `;
 }
 
@@ -810,6 +846,7 @@ function processGameState() {
     lastHeroTurn = false;
     streetActions = [];
     lastPersonaRec = null;
+    lastClaudeAdvice = null;
 
     if (state.heroCards.length > 0) {
       handMessages.push({

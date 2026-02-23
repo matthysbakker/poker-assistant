@@ -95,6 +95,52 @@ export const handAnalysisSchema = z.object({
   reasoning: z
     .string()
     .describe("Step-by-step reasoning explaining the recommendation, written for beginners"),
+  boardTexture: z
+    .string()
+    .optional()
+    .describe(
+      "Board texture summary for post-flop streets (e.g., 'Paired monotone', 'Rainbow dry board', 'Two-tone connected'). " +
+      "Omit for PREFLOP.",
+    ),
+  draws: z
+    .string()
+    .optional()
+    .describe(
+      "Hero's active draws on post-flop streets: flush draws (9 outs), open-ended straight draws (8), " +
+      "gutshots (4), combo draws (12-15). Example: 'Nut flush draw + OESD = 15 outs'. " +
+      "Omit if no relevant draws or PREFLOP.",
+    ),
+  equityEstimate: z
+    .string()
+    .optional()
+    .describe(
+      "Hero's estimated equity vs opponent's likely range on this post-flop street. " +
+      "Example: '~65% vs likely top-pair range'. Omit for PREFLOP or if highly uncertain.",
+    ),
+  spr: z
+    .string()
+    .optional()
+    .describe(
+      "Stack-to-pot ratio (SPR) for post-flop streets: effective stack divided by pot size. " +
+      "Low SPR (<4) = committed; medium SPR (4-12) = proceed with care; high SPR (>12) = no commitment yet. " +
+      "Example: 'SPR 4.2 — medium commitment, set/two-pair are committed'. Omit for PREFLOP.",
+    ),
+  potOdds: z
+    .string()
+    .optional()
+    .describe(
+      "Pot odds if hero is facing a bet on a post-flop street. " +
+      "Format: 'Getting 2.5:1, need 29% equity to call profitably'. " +
+      "Omit if hero is not facing a bet or PREFLOP.",
+    ),
+  facingAction: z
+    .string()
+    .optional()
+    .describe(
+      "The action hero is currently facing on a post-flop street " +
+      "(e.g., 'Facing a 2/3-pot c-bet', 'Facing a check-raise to 6x', 'First to act — no bet facing'). " +
+      "Omit for PREFLOP.",
+    ),
   concept: z
     .string()
     .optional()

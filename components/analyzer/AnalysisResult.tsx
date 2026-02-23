@@ -11,6 +11,7 @@ import { saveHand } from "@/lib/storage/hands";
 import { LoadingState } from "./LoadingState";
 import { OpponentTable } from "./OpponentTable";
 import { PersonaComparison } from "./PersonaComparison";
+import { PostFlopPanel } from "./PostFlopPanel";
 import type { ChartPosition } from "@/lib/poker/personas";
 import type { TableProfile } from "@/lib/poker/table-temperature";
 
@@ -24,7 +25,7 @@ interface AnalysisResultProps {
   captureMode?: "manual" | "continuous";
   onHandSaved?: () => void;
   onOpponentsDetected?: (opponents: Opponent[]) => void;
-  onAnalysisComplete?: () => void;
+  onAnalysisComplete?: (analysis?: HandAnalysis) => void;
   recommendedPersonaId?: string;
   tableTemperature?: TableProfile;
   rotated?: boolean;
@@ -80,12 +81,14 @@ export function AnalysisResult({
         }
       }
 
+      const completedAnalysis = object as HandAnalysis;
+
       createThumbnail(imageBase64).then((thumbnail) => {
-        saveHand(thumbnail, object as HandAnalysis);
+        saveHand(thumbnail, completedAnalysis);
         onHandSaved?.();
       });
 
-      onAnalysisComplete?.();
+      onAnalysisComplete?.(completedAnalysis);
     }
   }, [isLoading, object, imageBase64, onHandSaved, onOpponentsDetected, onAnalysisComplete]);
 
@@ -183,6 +186,19 @@ export function AnalysisResult({
           )}
         </div>
       )}
+
+      {/* Post-flop analysis panel */}
+      {object.street && object.street !== "PREFLOP" &&
+        (object.boardTexture || object.spr || object.draws || object.potOdds) && (
+          <PostFlopPanel
+            boardTexture={object.boardTexture}
+            draws={object.draws}
+            equityEstimate={object.equityEstimate}
+            spr={object.spr}
+            potOdds={object.potOdds}
+            facingAction={object.facingAction}
+          />
+        )}
 
       {/* Persona comparison — preflop only */}
       {object.street === "PREFLOP" && object.heroCards && object.heroPosition && (

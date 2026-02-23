@@ -17,6 +17,7 @@ import {
   updateOpponentProfiles,
 } from "@/lib/storage/sessions";
 import { useContinuousCapture } from "@/lib/hand-tracking";
+import type { HandAnalysis } from "@/lib/ai/schema";
 
 export default function Home() {
   const [imageBase64, setImageBase64] = useState<string | null>(null);
@@ -94,6 +95,25 @@ export default function Home() {
     setOpponentHistory(undefined);
     setSessionHandCount(0);
   }, []);
+
+  // Relay Claude's final recommendation to the poker table overlay
+  const handleAnalysisComplete = useCallback((analysis?: HandAnalysis) => {
+    markAnalysisComplete(analysis);
+    if (analysis?.action) {
+      window.postMessage(
+        {
+          source: "poker-assistant-app",
+          type: "CLAUDE_ADVICE",
+          action: analysis.action,
+          amount: analysis.amount ?? null,
+          street: analysis.street ?? null,
+          boardTexture: analysis.boardTexture ?? null,
+          spr: analysis.spr ?? null,
+        },
+        window.location.origin,
+      );
+    }
+  }, [markAnalysisComplete]);
 
   // Persona auto-selection — locked per hand, computed at PREFLOP start
   const [selectedPersona, setSelectedPersona] = useState<SelectedPersona | null>(null);
@@ -259,7 +279,7 @@ export default function Home() {
           captureMode={captureMode}
           onHandSaved={handleHandSaved}
           onOpponentsDetected={handleOpponentsDetected}
-          onAnalysisComplete={markAnalysisComplete}
+          onAnalysisComplete={handleAnalysisComplete}
           recommendedPersonaId={selectedPersona?.persona.id}
           tableTemperature={tableProfile}
           rotated={selectedPersona?.rotated}

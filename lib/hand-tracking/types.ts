@@ -1,5 +1,6 @@
 import type { CardCode, Position } from "@/lib/card-detection/types";
 import type { DetectionResult } from "@/lib/card-detection/types";
+import type { HandAnalysis } from "@/lib/ai/schema";
 
 export type Street = "WAITING" | "PREFLOP" | "FLOP" | "TURN" | "RIVER";
 
@@ -7,6 +8,8 @@ export interface StreetSnapshot {
   street: Street;
   heroCards: CardCode[];
   communityCards: CardCode[];
+  /** Claude's completed analysis for this street, stored after streaming finishes. */
+  analysis?: HandAnalysis;
 }
 
 export interface HandState {
@@ -35,5 +38,5 @@ export interface HandState {
 export type HandAction =
   | { type: "DETECTION"; detection: DetectionResult }
   | { type: "ANALYSIS_STARTED" }
-  | { type: "ANALYSIS_COMPLETE" }
+  | { type: "ANALYSIS_COMPLETE"; analysis?: HandAnalysis }
   | { type: "RESET" };

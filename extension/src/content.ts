@@ -37,6 +37,18 @@ window.addEventListener("message", (event) => {
       temperature: event.data.temperature,
     });
   }
+
+  // Forward Claude's completed advice to the poker overlay
+  if (event.data.type === "CLAUDE_ADVICE") {
+    chrome.runtime.sendMessage({
+      type: "CLAUDE_ADVICE",
+      action: event.data.action,
+      amount: event.data.amount,
+      street: event.data.street,
+      boardTexture: event.data.boardTexture,
+      spr: event.data.spr,
+    });
+  }
 });
 
 // Relay captures from background to page
