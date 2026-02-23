@@ -374,6 +374,123 @@ function scrapeAvailableActions(): ActionOption[] {
   return actions;
 }
 
+// ── Table Statistics Scraping ──────────────────────────────────────────
+
+/**
+ * Find the numeric value associated with a stat label (e.g. "VPIP", "AF")
+ * inside a player area element.
+ *
+ * Handles two common Playtech DOM patterns:
+ *   A) <span class="label">VPIP</span><span class="value">28</span>
+ *   B) <div>VPIP 28</div>  (label and value in same text node)
+ */
+function findStatValue(area: Element, label: string): number | null {
+  const all = Array.from(area.querySelectorAll("*"));
+  for (const el of all) {
+    const ownText = Array.from(el.childNodes)
+      .filter((n) => n.nodeType === Node.TEXT_NODE)
+      .map((n) => n.textContent?.trim() || "")
+      .join("");
+
+    // Pattern B: single element contains "VPIP 28" or "VPIP: 28"
+    const inlineMatch = ownText.match(
+      new RegExp(`${label}[:\\s]+([\\d.]+)`, "i"),
+    );
+    if (inlineMatch) return parseFloat(inlineMatch[1]);
+
+    // Pattern A: element text IS the label; value is in a sibling
+    if (ownText === label) {
+      const siblings = Array.from(el.parentElement?.children ?? []);
+      for (const sib of siblings) {
+        if (sib === el) continue;
+        const val = parseFloat(sib.textContent?.trim() || "");
+        if (!isNaN(val)) return val;
+      }
+      // Or next/prev sibling text node
+      const next = el.nextSibling?.textContent?.trim();
+      if (next) {
+        const val = parseFloat(next);
+        if (!isNaN(val)) return val;
+      }
+    }
+  }
+  return null;
+}
+
+interface DomPlayerStat {
+  seat: number;
+  vpip: number | null;
+  af: number | null;
+}
+
+let statDebugLogged = false;
+
+function scrapeTableStats(): DomPlayerStat[] {
+  const results: DomPlayerStat[] = [];
+  document.querySelectorAll(".player-area").forEach((area) => {
+    const seatMatch = area.className.match(/player-seat-(\d+)/);
+    if (!seatMatch) return;
+    const seat = parseInt(seatMatch[1], 10);
+    const vpip = findStatValue(area, "VPIP");
+    const af = findStatValue(area, "AF");
+    results.push({ seat, vpip, af });
+  });
+
+  // One-time debug log so we can verify / refine selectors
+  if (!statDebugLogged) {
+    statDebugLogged = true;
+    const hasAny = results.some((s) => s.vpip !== null || s.af !== null);
+    if (hasAny) {
+      console.log("[Poker] DOM stats scraped:", results);
+    } else {
+      const firstArea = document.querySelector(".player-area");
+      console.log(
+        "[Poker] VPIP/AF not found. First .player-area snippet:",
+        firstArea?.innerHTML?.slice(0, 600) ?? "(none)",
+      );
+    }
+  }
+
+  return results;
+}
+
+type TableTemperatureLocal =
+  | "tight_passive"
+  | "tight_aggressive"
+  | "loose_passive"
+  | "loose_aggressive"
+  | "balanced"
+  | "unknown";
+
+function deriveTemperatureFromDomStats(
+  stats: DomPlayerStat[],
+  heroSeat: number,
+): TableTemperatureLocal {
+  const opponents = stats.filter((s) => s.seat !== heroSeat);
+  const withVpip = opponents.filter((s) => s.vpip !== null);
+  if (withVpip.length === 0) return "unknown";
+
+  const avgVpip =
+    withVpip.reduce((sum, s) => sum + s.vpip!, 0) / withVpip.length;
+
+  const withAf = opponents.filter((s) => s.af !== null);
+  const avgAf =
+    withAf.length > 0
+      ? withAf.reduce((sum, s) => sum + s.af!, 0) / withAf.length
+      : null;
+
+  const isTight = avgVpip < 22;
+  const isLoose = avgVpip > 30;
+  const isAggressive = avgAf !== null ? avgAf > 1.5 : null;
+
+  if (!isTight && !isLoose) return "balanced";
+  if (isTight) {
+    return isAggressive === false ? "tight_passive" : "tight_aggressive";
+  }
+  // Loose
+  return isAggressive === false ? "loose_passive" : "loose_aggressive";
+}
+
 function scrapeGameState(): GameState {
   // Pure read — no DOM mutations here (todo 032 / CQS principle)
   return {
@@ -500,11 +617,24 @@ const PERSONA_API_URL = "http://localhost:3006/api/persona";
 
 async function requestPersona(heroCards: string[], position: string) {
   if (lastPersonaRec) return; // already set for this hand
+
+  // Derive temperature from VPIP/AF stats visible in the table DOM
+  const tableStats = scrapeTableStats();
+  const heroSeat = scrapeHeroSeat();
+  const domTemperature = deriveTemperatureFromDomStats(tableStats, heroSeat);
+  if (domTemperature !== "unknown") {
+    console.log("[Poker] Table temperature from DOM stats:", domTemperature);
+  }
+
   try {
     const res = await fetch(PERSONA_API_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ heroCards: heroCards.join(" "), position }),
+      body: JSON.stringify({
+        heroCards: heroCards.join(" "),
+        position,
+        temperature: domTemperature !== "unknown" ? domTemperature : undefined,
+      }),
     });
     if (!res.ok) return;
     const data = await res.json();
