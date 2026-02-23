@@ -524,6 +524,14 @@ async function requestPersona(heroCards: string[], position: string) {
 
 // ── Decision Request ───────────────────────────────────────────────────
 
+/** Brief post-flop style guidance per persona, prepended to every hand. */
+const PERSONA_GUIDES: Record<string, string> = {
+  "GTO Grinder":    "Play balanced, unexploitable ranges. Mix value bets and bluffs at correct frequencies. Avoid easy-to-exploit patterns post-flop.",
+  "TAG Shark":      "Play tight-aggressive. Only enter with premium hands and strong draws. Apply maximum pressure with value bets and bluffs when in the hand.",
+  "LAG Assassin":   "Play loose-aggressive. Wide ranges, relentless pressure with bets and raises, frequent semi-bluffs and float plays.",
+  "Exploit Hawk":   "Exploit tendencies. Steal relentlessly from tight/passive players. Value bet thinly against calling stations. Bluff only proven folders.",
+};
+
 function requestDecision(
   messages: Array<{ role: "user" | "assistant"; content: string }>,
 ) {
@@ -532,6 +540,16 @@ function requestDecision(
     return;
   }
   executing = true;
+
+  // Prepend persona style guide so Claude plays the same archetype all hand
+  const personaGuide = lastPersonaRec && PERSONA_GUIDES[lastPersonaRec.name];
+  const fullMessages = personaGuide
+    ? [
+        { role: "user" as const, content: `Play as ${lastPersonaRec!.name}: ${personaGuide}` },
+        { role: "assistant" as const, content: `Understood. Playing as ${lastPersonaRec!.name} throughout this hand.` },
+        ...messages,
+      ]
+    : messages;
 
   // Watchdog: auto-fold if AUTOPILOT_ACTION never arrives (todo 031 — plan specified 12s timeout)
   const timer = scrapeTimer();
@@ -545,10 +563,10 @@ function requestDecision(
     }
   }, timeoutMs);
 
-  console.log("[Poker] Requesting decision. Messages:", messages.length);
+  console.log("[Poker] Requesting decision. Messages:", fullMessages.length, lastPersonaRec ? `(${lastPersonaRec.name})` : "");
   chrome.runtime.sendMessage({
     type: "AUTOPILOT_DECIDE",
-    messages,
+    messages: fullMessages,
   });
 }
 
