@@ -912,6 +912,12 @@ function processGameState() {
         const activePlayers = state.players.filter((p) => p.name && !p.folded && p.hasCards);
         const position = getPosition(state.heroSeat, state.dealerSeat, activePlayers.length);
         requestPersona(state.heroCards, position);
+
+        // Pre-fetch decision for monitor mode — start the API call while others are deciding
+        // so advice is ready (or nearly ready) by the time action reaches hero
+        if (autopilotMode === "monitor") {
+          requestDecision([...handMessages]);
+        }
       }
     }
   }
