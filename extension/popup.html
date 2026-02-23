@@ -57,10 +57,23 @@
       opacity: 0.5;
       cursor: not-allowed;
     }
-    .toggle-btn.autopilot {
+    .toggle-btn.monitor {
+      background: #1e3a5f;
+      border-color: #3b82f6;
+      color: #bfdbfe;
+    }
+    .toggle-btn.play {
       background: #581c87;
       border-color: #8b5cf6;
       color: #e9d5ff;
+    }
+    .btn-row {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+    .btn-row .toggle-btn {
+      margin-bottom: 0;
     }
     .divider {
       border: none;
@@ -110,7 +123,10 @@
     <div id="poker-dot" class="dot"></div>
     <span id="poker-status" class="status-text">Checking poker tab...</span>
   </div>
-  <button id="autopilot-btn" class="toggle-btn" disabled>Loading...</button>
+  <div class="btn-row">
+    <button id="monitor-btn" class="toggle-btn" disabled>Monitor</button>
+    <button id="play-btn" class="toggle-btn" disabled>Play</button>
+  </div>
   <div class="hotkey-hint">
     Press <kbd id="hotkey">Ctrl+Shift+P</kbd> for manual capture
   </div>

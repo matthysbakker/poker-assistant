@@ -87,7 +87,7 @@ const SVG_RANK_MAP: Record<string, string> = {
 
 // ── State ──────────────────────────────────────────────────────────────
 
-let autopilotEnabled = false;
+let autopilotMode: "off" | "monitor" | "play" = "off";
 let executing = false;
 let currentHandId: string | null = null;
 let handMessages: Array<{ role: "user" | "assistant"; content: string }> = [];
@@ -95,6 +95,20 @@ let lastState: GameState | null = null;
 let lastHeroTurn = false;
 
 // ── Registration ───────────────────────────────────────────────────────
+
+// Immediate heartbeat — proves script loaded and can reach background
+chrome.runtime.sendMessage(
+  {
+    type: "AUTOPILOT_DEBUG",
+    data: {
+      type: "script_loaded",
+      url: window.location.href,
+      hasTableArea: !!document.querySelector(".table-area"),
+      hasBody: !!document.body,
+      bodyHTML: document.body?.innerHTML?.slice(0, 500) || "(empty)",
+    },
+  },
+);
 
 chrome.runtime.sendMessage(
   { type: "REGISTER_POKER_TAB" },
@@ -122,10 +136,10 @@ chrome.runtime.onMessage.addListener((message) => {
     onDecisionReceived(message.action);
   }
 
-  if (message.type === "AUTOPILOT_ENABLED") {
-    autopilotEnabled = message.enabled;
-    console.log("[Poker] Autopilot", autopilotEnabled ? "ENABLED" : "DISABLED");
-    if (autopilotEnabled) {
+  if (message.type === "AUTOPILOT_MODE") {
+    autopilotMode = message.mode;
+    console.log("[Poker] Autopilot mode:", autopilotMode);
+    if (autopilotMode !== "off") {
       startObserving();
     }
   }
@@ -162,6 +176,9 @@ function scrapeHeroCards(): string[] {
   const holder = document.querySelector(".cards-holder-hero");
   if (!holder) return cards;
 
+  // Log raw HTML for debugging
+  console.log("[Poker] Hero cards HTML:", holder.outerHTML);
+
   // Try SVG filenames first (more reliable)
   holder.querySelectorAll(".card img.card-image").forEach((img) => {
     const src = img.getAttribute("src") || "";
@@ -170,8 +187,9 @@ function scrapeHeroCards(): string[] {
     if (card) cards.push(card);
   });
 
-  // Fallback to text nodes
-  if (cards.length === 0) {
+  // Fallback to text nodes if SVG didn't find both cards
+  if (cards.length < 2) {
+    cards.length = 0; // reset and try text approach for all
     holder.querySelectorAll(".card").forEach((cardEl) => {
       const card = parseCardFromText(
         cardEl.querySelector(".card-rank"),
@@ -665,6 +683,56 @@ function onDecisionReceived(action: AutopilotAction) {
   executeAction(action);
 }
 
+// ── Monitor Overlay ────────────────────────────────────────────────────
+
+let overlayEl: HTMLElement | null = null;
+
+function getOverlay(): HTMLElement {
+  if (overlayEl) return overlayEl;
+  overlayEl = document.createElement("div");
+  overlayEl.id = "poker-monitor-overlay";
+  overlayEl.style.cssText = `
+    position: fixed; top: 8px; right: 8px; z-index: 999999;
+    background: rgba(0,0,0,0.85); color: #e4e4e7;
+    font: 11px/1.4 monospace; padding: 8px 10px;
+    border-radius: 6px; border: 1px solid #3f3f46;
+    max-width: 320px; pointer-events: none;
+  `;
+  document.body.appendChild(overlayEl);
+  return overlayEl;
+}
+
+function updateOverlay(state: GameState) {
+  if (autopilotMode === "off") {
+    if (overlayEl) {
+      overlayEl.remove();
+      overlayEl = null;
+    }
+    return;
+  }
+
+  const el = getOverlay();
+  const modeLabel = autopilotMode === "play" ? "PLAY" : "MONITOR";
+  const modeColor = autopilotMode === "play" ? "#c084fc" : "#60a5fa";
+
+  const hero = state.heroCards.length > 0 ? state.heroCards.join(" ") : "—";
+  const board = state.communityCards.length > 0 ? state.communityCards.join(" ") : "—";
+  const actions = state.availableActions.map((a) => a.label).join(" | ") || "—";
+  const turn = state.isHeroTurn ? "YES" : "no";
+  const turnColor = state.isHeroTurn ? "#4ade80" : "#71717a";
+
+  el.innerHTML = `
+    <div style="color:${modeColor};font-weight:bold;margin-bottom:4px">${modeLabel}</div>
+    <div>Hand: ${state.handId || "—"}</div>
+    <div>Hero: <b>${hero}</b></div>
+    <div>Board: ${board}</div>
+    <div>Pot: ${state.pot || "—"}</div>
+    <div>Turn: <span style="color:${turnColor}">${turn}</span></div>
+    <div>Actions: ${actions}</div>
+    <div style="color:#71717a;margin-top:4px">Players: ${state.players.filter((p) => p.name).length}</div>
+  `;
+}
+
 // ── Game State Observer ────────────────────────────────────────────────
 
 let observerActive = false;
@@ -678,10 +746,42 @@ function onDomChange() {
   }, 200);
 }
 
+let lastDebugTime = 0;
+const DEBUG_THROTTLE_MS = 3000;
+
+function sendDebugLog(data: Record<string, unknown>) {
+  // Route through background script (direct fetch from content script may be blocked)
+  chrome.runtime.sendMessage({ type: "AUTOPILOT_DEBUG", data });
+}
+
 function processGameState() {
   const state = scrapeGameState();
 
-  // Log state periodically for debugging
+  // Update on-page overlay
+  updateOverlay(state);
+
+  // In monitor mode, send state updates throttled to every 3s
+  if (autopilotMode === "monitor") {
+    const now = Date.now();
+    if (now - lastDebugTime > DEBUG_THROTTLE_MS) {
+      lastDebugTime = now;
+      const heroHolder = document.querySelector(".cards-holder-hero");
+      const communityHolder = document.querySelector(".cardset-community");
+      const actionsArea = document.querySelector(".actions-area");
+      sendDebugLog({
+        type: "monitor",
+        handId: state.handId || "(none)",
+        state,
+        dom: {
+          heroCards: heroHolder?.outerHTML || null,
+          communityCards: communityHolder?.outerHTML || null,
+          actionsArea: actionsArea?.outerHTML || null,
+        },
+      });
+    }
+  }
+
+  // Log new hand detection
   if (state.handId && state.handId !== currentHandId) {
     console.log("[Poker] New hand:", state.handId);
     console.log("[Poker] Game state:", JSON.stringify(state, null, 2));
@@ -704,8 +804,8 @@ function processGameState() {
   }
 
   // Detect hero's turn
-  if (state.isHeroTurn && !lastHeroTurn && !executing && autopilotEnabled) {
-    console.log("[Poker] Hero's turn detected!");
+  if (state.isHeroTurn && !lastHeroTurn && !executing && autopilotMode !== "off") {
+    console.log("[Poker] Hero's turn detected! Mode:", autopilotMode);
 
     // If we haven't built the hand start message yet, do it now
     if (handMessages.length === 0 && state.heroCards.length > 0) {
@@ -721,8 +821,21 @@ function processGameState() {
       }
     }
 
-    // Request Claude's decision
-    if (handMessages.length > 0) {
+    // In monitor mode, log what Claude would see but don't request a decision
+    if (autopilotMode === "monitor") {
+      const lastMsg = handMessages[handMessages.length - 1];
+      console.log("[Poker] [MONITOR] Would send to Claude:", lastMsg?.content);
+      sendDebugLog({
+        type: "hero_turn",
+        handId: state.handId,
+        mode: "monitor",
+        message: lastMsg?.content,
+        state,
+      });
+    }
+
+    // In play mode, request Claude's decision
+    if (autopilotMode === "play" && handMessages.length > 0) {
       requestDecision([...handMessages]);
     }
   }
@@ -736,7 +849,11 @@ function startObserving() {
 
   const tableArea = document.querySelector(".table-area");
   if (!tableArea) {
-    console.log("[Poker] No .table-area found, retrying in 2s...");
+    // Log what we DO see to help diagnose
+    const bodyClasses = document.body?.className || "(no body)";
+    const url = window.location.href;
+    console.log(`[Poker] No .table-area found. URL: ${url}, body classes: ${bodyClasses}`);
+    sendDebugLog({ type: "no_table", url, bodyClasses });
     setTimeout(startObserving, 2000);
     return;
   }

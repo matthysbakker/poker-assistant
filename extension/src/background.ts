@@ -40,8 +40,8 @@ let pokerWindowId: number | null = null;
 
 // Autopilot state
 let pokerTabId: number | null = null;
-let autopilotActive = false;
-const AUTOPILOT_API_URL = "http://localhost:3000/api/autopilot";
+let autopilotMode: "off" | "monitor" | "play" = "off";
+const AUTOPILOT_API_URL = "http://localhost:3006/api/autopilot";
 
 console.log("[BG] Background script started");
 
@@ -58,7 +58,7 @@ function setBadge(text: string, color: string, timeout = 3000) {
     badgeTimeoutId = setTimeout(() => {
       badgeTimeoutId = null;
       // Restore persistent badge based on active mode
-      if (autopilotActive) {
+      if (autopilotMode !== "off") {
         chrome.browserAction.setBadgeText({ text: "AP" });
         chrome.browserAction.setBadgeBackgroundColor({ color: "#8b5cf6" });
       } else if (isContinuousActive()) {
@@ -199,12 +199,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       connected: webAppTabId !== null,
       continuous: isContinuousActive(),
       pokerConnected: pokerTabId !== null,
-      autopilot: autopilotActive,
+      autopilotMode,
     });
     return;
   }
 
   if (message.type === "CONTINUOUS_START") {
+    if (autopilotMode !== "off") {
+      console.log("[BG] Ignoring continuous start — autopilot is active");
+      sendResponse({ ok: false, continuous: false });
+      return;
+    }
     startContinuousCapture();
     sendResponse({ ok: true, continuous: true });
     return;
@@ -221,11 +226,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === "REGISTER_POKER_TAB" && sender.tab?.id) {
     pokerTabId = sender.tab.id;
     console.log("[BG] Poker tab registered:", pokerTabId);
-    // If autopilot was already active (e.g. page reload), re-enable
-    if (autopilotActive) {
+    // If autopilot was already active (e.g. page reload), re-send mode
+    if (autopilotMode !== "off") {
       chrome.tabs.sendMessage(pokerTabId, {
-        type: "AUTOPILOT_ENABLED",
-        enabled: true,
+        type: "AUTOPILOT_MODE",
+        mode: autopilotMode,
       });
     }
     sendResponse({ ok: true });
@@ -240,44 +245,46 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return;
   }
 
-  if (message.type === "AUTOPILOT_START") {
-    autopilotActive = true;
-    console.log("[BG] Autopilot enabled");
+  if (message.type === "AUTOPILOT_SET_MODE") {
+    const newMode = message.mode as "off" | "monitor" | "play";
+    if (newMode !== "off" && isContinuousActive()) {
+      stopContinuousCapture();
+      console.log("[BG] Stopped continuous capture for autopilot");
+    }
+    autopilotMode = newMode;
+    console.log("[BG] Autopilot mode:", autopilotMode);
     if (pokerTabId) {
       chrome.tabs.sendMessage(pokerTabId, {
-        type: "AUTOPILOT_ENABLED",
-        enabled: true,
+        type: "AUTOPILOT_MODE",
+        mode: autopilotMode,
       });
     }
-    setBadge("AP", "#8b5cf6", 0); // persistent purple badge
-    sendResponse({ ok: true, autopilot: true });
-    return;
-  }
-
-  if (message.type === "AUTOPILOT_STOP") {
-    autopilotActive = false;
-    console.log("[BG] Autopilot disabled");
-    if (pokerTabId) {
-      chrome.tabs.sendMessage(pokerTabId, {
-        type: "AUTOPILOT_ENABLED",
-        enabled: false,
-      });
-    }
-    // Restore badge to continuous state or clear
-    if (isContinuousActive()) {
-      setBadge("ON", "#22c55e", 0);
+    if (autopilotMode === "play") {
+      setBadge("AP", "#8b5cf6", 0);
+    } else if (autopilotMode === "monitor") {
+      setBadge("MN", "#3b82f6", 0);
     } else {
       chrome.browserAction.setBadgeText({ text: "" });
     }
-    sendResponse({ ok: true, autopilot: false });
+    sendResponse({ ok: true, autopilotMode });
     return;
   }
 
   if (message.type === "AUTOPILOT_DECIDE") {
     console.log("[BG] Autopilot decision requested");
-    // Proxy to localhost API (async — return true to keep sendResponse alive)
     fetchAutopilotDecision(message.messages);
-    return; // async response via AUTOPILOT_ACTION message
+    return;
+  }
+
+  if (message.type === "AUTOPILOT_DEBUG") {
+    // Log full state to background console
+    console.log("[BG] Debug:", message.data?.type);
+    console.log("[BG] State:", JSON.stringify(message.data?.state, null, 2));
+    if (message.data?.dom) {
+      console.log("[BG] Hero DOM:", message.data.dom.heroCards);
+      console.log("[BG] Actions DOM:", message.data.dom.actionsArea);
+    }
+    return;
   }
 });
 

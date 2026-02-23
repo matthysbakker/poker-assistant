@@ -6,14 +6,13 @@ const hotkeyEl = document.getElementById("hotkey") as HTMLElement;
 const toggleBtn = document.getElementById("toggle-btn") as HTMLButtonElement;
 const pokerDot = document.getElementById("poker-dot") as HTMLElement;
 const pokerStatus = document.getElementById("poker-status") as HTMLElement;
-const autopilotBtn = document.getElementById(
-  "autopilot-btn",
-) as HTMLButtonElement;
+const monitorBtn = document.getElementById("monitor-btn") as HTMLButtonElement;
+const playBtn = document.getElementById("play-btn") as HTMLButtonElement;
 
 hotkeyEl.textContent = "Ctrl+Shift+P";
 
 let continuousActive = false;
-let autopilotActive = false;
+let currentMode: "off" | "monitor" | "play" = "off";
 
 function updateToggleButton() {
   if (continuousActive) {
@@ -25,14 +24,34 @@ function updateToggleButton() {
   }
 }
 
-function updateAutopilotButton() {
-  if (autopilotActive) {
-    autopilotBtn.textContent = "Stop Autopilot";
-    autopilotBtn.classList.add("autopilot");
-  } else {
-    autopilotBtn.textContent = "Start Autopilot";
-    autopilotBtn.classList.remove("autopilot");
-  }
+function updateModeButtons() {
+  monitorBtn.classList.toggle("monitor", currentMode === "monitor");
+  playBtn.classList.toggle("play", currentMode === "play");
+  monitorBtn.textContent = currentMode === "monitor" ? "Stop Monitor" : "Monitor";
+  playBtn.textContent = currentMode === "play" ? "Stop Play" : "Play";
+}
+
+function setMode(mode: "off" | "monitor" | "play") {
+  monitorBtn.disabled = true;
+  playBtn.disabled = true;
+
+  const timeout = setTimeout(() => {
+    monitorBtn.disabled = false;
+    playBtn.disabled = false;
+  }, 3000);
+
+  chrome.runtime.sendMessage(
+    { type: "AUTOPILOT_SET_MODE", mode },
+    (response) => {
+      clearTimeout(timeout);
+      if (response?.ok) {
+        currentMode = response.autopilotMode;
+        updateModeButtons();
+      }
+      monitorBtn.disabled = false;
+      playBtn.disabled = false;
+    },
+  );
 }
 
 chrome.runtime.sendMessage({ type: "GET_STATUS" }, (response) => {
@@ -54,14 +73,15 @@ chrome.runtime.sendMessage({ type: "GET_STATUS" }, (response) => {
   if (response?.pokerConnected) {
     pokerDot.classList.add("connected");
     pokerStatus.textContent = "Poker tab detected";
-    autopilotBtn.disabled = false;
-    autopilotActive = response.autopilot ?? false;
-    updateAutopilotButton();
+    monitorBtn.disabled = false;
+    playBtn.disabled = false;
+    currentMode = response.autopilotMode ?? "off";
+    updateModeButtons();
   } else {
     pokerDot.classList.add("disconnected");
     pokerStatus.textContent = "No poker tab found";
-    autopilotBtn.disabled = true;
-    autopilotBtn.textContent = "Open poker first";
+    monitorBtn.disabled = true;
+    playBtn.disabled = true;
   }
 });
 
@@ -83,20 +103,10 @@ toggleBtn.addEventListener("click", () => {
   });
 });
 
-autopilotBtn.addEventListener("click", () => {
-  const messageType = autopilotActive ? "AUTOPILOT_STOP" : "AUTOPILOT_START";
-  autopilotBtn.disabled = true;
+monitorBtn.addEventListener("click", () => {
+  setMode(currentMode === "monitor" ? "off" : "monitor");
+});
 
-  const timeout = setTimeout(() => {
-    autopilotBtn.disabled = false;
-  }, 3000);
-
-  chrome.runtime.sendMessage({ type: messageType }, (response) => {
-    clearTimeout(timeout);
-    if (response?.ok) {
-      autopilotActive = response.autopilot;
-      updateAutopilotButton();
-    }
-    autopilotBtn.disabled = false;
-  });
+playBtn.addEventListener("click", () => {
+  setMode(currentMode === "play" ? "off" : "play");
 });
