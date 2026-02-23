@@ -82,6 +82,7 @@ interface ClaudeAdvice {
 let autopilotMode: "off" | "monitor" | "play" = "off";
 let lastPersonaRec: PersonaRec | null = null;
 let lastClaudeAdvice: ClaudeAdvice | null = null;
+let monitorAdvice: AutopilotAction | null = null;
 let executing = false;
 let currentHandId: string | null = null;
 let handMessages: Array<{ role: "user" | "assistant"; content: string }> = [];
@@ -493,6 +494,34 @@ function buildTurnMessage(state: GameState): string {
   return lines.join("\n");
 }
 
+// ── Persona Request ────────────────────────────────────────────────────
+
+const PERSONA_API_URL = "http://localhost:3006/api/persona";
+
+async function requestPersona(heroCards: string[], position: string) {
+  if (lastPersonaRec) return; // already set for this hand
+  try {
+    const res = await fetch(PERSONA_API_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ heroCards: heroCards.join(" "), position }),
+    });
+    if (!res.ok) return;
+    const data = await res.json();
+    if (data.personaName && data.action) {
+      lastPersonaRec = {
+        name: data.personaName,
+        action: data.action,
+        temperature: data.temperature ?? "unknown",
+      };
+      console.log("[Poker] Persona:", lastPersonaRec.name, "→", lastPersonaRec.action);
+      if (lastState) updateOverlay(lastState);
+    }
+  } catch {
+    // Server not running — silently skip
+  }
+}
+
 // ── Decision Request ───────────────────────────────────────────────────
 
 function requestDecision(
@@ -509,9 +538,11 @@ function requestDecision(
   const timeoutMs = Math.max(3000, (timer ?? 12) * 1000 - 3000);
   decisionWatchdog = setTimeout(() => {
     decisionWatchdog = null;
-    console.warn("[Poker] Decision timeout — auto-fold");
+    console.warn("[Poker] Decision timeout");
     executing = false;
-    executeAction({ action: "FOLD", amount: null, reasoning: "Decision timeout" });
+    if (autopilotMode === "play") {
+      executeAction({ action: "FOLD", amount: null, reasoning: "Decision timeout" });
+    }
   }, timeoutMs);
 
   console.log("[Poker] Requesting decision. Messages:", messages.length);
@@ -666,6 +697,19 @@ function onDecisionReceived(action: AutopilotAction) {
     decisionWatchdog = null;
   }
 
+  // Monitor mode: display recommendation in overlay, do not execute
+  if (autopilotMode === "monitor") {
+    monitorAdvice = action;
+    executing = false;
+    const recStr = action.amount != null
+      ? `${action.action} €${action.amount.toFixed(2)}`
+      : action.action;
+    console.log(`[Poker] [MONITOR] Claude recommends: ${recStr} — ${action.reasoning}`);
+    // Trigger an overlay refresh with the latest scraped state
+    if (lastState) updateOverlay(lastState);
+    return;
+  }
+
   // Clear pre-action checkboxes — play mode only, here not in scrapeGameState (todo 032)
   if (autopilotMode === "play") {
     document.querySelectorAll(".pre-action-toggle:checked").forEach((el) => {
@@ -749,18 +793,26 @@ function updateOverlay(state: GameState) {
       ? `<div style="border-top:1px solid #3f3f46;margin-top:6px;padding-top:6px;color:#52525b">Persona: —</div>`
       : "";
 
-  // Claude advice line — shown for all streets when available
-  const adviceRec = lastClaudeAdvice?.action
+  // Claude advice line — web-app advice takes precedence; fall back to monitor API advice
+  const webAdviceRec = lastClaudeAdvice?.action
     ? lastClaudeAdvice.action + (lastClaudeAdvice.amount ? ` ${lastClaudeAdvice.amount}` : "")
     : null;
-  const adviceExtra = !isPreflop && lastClaudeAdvice?.boardTexture
+  const webAdviceExtra = !isPreflop && lastClaudeAdvice?.boardTexture
     ? ` | ${escapeHtml(lastClaudeAdvice.boardTexture)}${lastClaudeAdvice.spr ? ` | SPR ${escapeHtml(lastClaudeAdvice.spr)}` : ""}`
+    : "";
+  const monAdviceRec = !webAdviceRec && monitorAdvice
+    ? monitorAdvice.action + (monitorAdvice.amount != null ? ` €${monitorAdvice.amount.toFixed(2)}` : "")
+    : null;
+  const adviceRec = webAdviceRec ?? monAdviceRec;
+  const adviceExtra = webAdviceRec ? webAdviceExtra : "";
+  const adviceReasoning = !webAdviceRec && monitorAdvice?.reasoning
+    ? ` — ${escapeHtml(monitorAdvice.reasoning.slice(0, 80))}${monitorAdvice.reasoning.length > 80 ? "…" : ""}`
     : "";
   const claudeHtml = adviceRec
     ? `<div style="border-top:1px solid #3f3f46;margin-top:6px;padding-top:6px">
          <span style="color:#71717a">AI: </span>
          <span style="color:#4ade80;font-weight:bold">${escapeHtml(adviceRec)}</span>
-         <span style="color:#52525b">${adviceExtra}</span>
+         <span style="color:#52525b">${adviceExtra}${adviceReasoning}</span>
        </div>`
     : "";
 
@@ -847,12 +899,20 @@ function processGameState() {
     streetActions = [];
     lastPersonaRec = null;
     lastClaudeAdvice = null;
+    monitorAdvice = null;
 
     if (state.heroCards.length > 0) {
       handMessages.push({
         role: "user",
         content: buildHandStartMessage(state),
       });
+
+      // Fetch persona recommendation for this hand (preflop only)
+      if (autopilotMode !== "off" && state.communityCards.length === 0) {
+        const activePlayers = state.players.filter((p) => p.name && !p.folded && p.hasCards);
+        const position = getPosition(state.heroSeat, state.dealerSeat, activePlayers.length);
+        requestPersona(state.heroCards, position);
+      }
     }
   }
 
@@ -874,7 +934,7 @@ function processGameState() {
 
     if (autopilotMode === "monitor") {
       const lastMsg = handMessages[handMessages.length - 1];
-      console.log("[Poker] [MONITOR] Would send to Claude:", lastMsg?.content);
+      console.log("[Poker] [MONITOR] Sending to Claude:", lastMsg?.content);
       sendDebugLog({
         type: "hero_turn",
         handId: state.handId,
@@ -884,7 +944,7 @@ function processGameState() {
       });
     }
 
-    if (autopilotMode === "play" && handMessages.length > 0) {
+    if (autopilotMode !== "off" && handMessages.length > 0) {
       requestDecision([...handMessages]);
     }
   }

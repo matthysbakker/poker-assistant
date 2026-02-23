@@ -219,8 +219,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.type === "CONTINUOUS_START") {
-    if (autopilotMode !== "off") {
-      console.log("[BG] Ignoring continuous start — autopilot is active");
+    if (autopilotMode === "play") {
+      console.log("[BG] Ignoring continuous start — autopilot play mode is active");
       sendResponse({ ok: false, continuous: false });
       return;
     }
@@ -261,9 +261,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message.type === "AUTOPILOT_SET_MODE") {
     const newMode = message.mode as "off" | "monitor" | "play";
-    if (newMode !== "off" && isContinuousActive()) {
+    if (newMode === "play" && isContinuousActive()) {
       stopContinuousCapture();
-      console.log("[BG] Stopped continuous capture for autopilot");
+      console.log("[BG] Stopped continuous capture for autopilot play mode");
     }
     autopilotMode = newMode;
     console.log("[BG] Autopilot mode:", autopilotMode);
