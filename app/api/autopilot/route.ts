@@ -33,7 +33,7 @@ export async function POST(req: Request) {
 
   try {
     const { object } = await generateObject({
-      model: anthropic("claude-sonnet-4-6"),
+      model: anthropic("claude-haiku-4-5-20251001"),
       schema: autopilotActionSchema,
       system: AUTOPILOT_SYSTEM_PROMPT,
       messages: parsed.data.messages,
