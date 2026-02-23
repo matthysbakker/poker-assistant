@@ -558,7 +558,14 @@ function buildHandStartMessage(state: GameState): string {
   }
 
   if (state.heroCards.length > 0) {
-    lines.push(`\nHero holds: ${state.heroCards.join(" ")}`);
+    const [c1, c2] = state.heroCards;
+    const suitTag =
+      state.heroCards.length === 2 && c1 && c2
+        ? c1.slice(-1) === c2.slice(-1)
+          ? " (suited)"
+          : " (offsuit)"
+        : "";
+    lines.push(`\nHero holds: ${state.heroCards.join(" ")}${suitTag}`);
   }
 
   if (state.communityCards.length > 0) {
