@@ -12,14 +12,13 @@
  *   UNREGISTER_POKER_TAB  poker-content → bg   Tab unregisters on unload
  *   AUTOPILOT_DECIDE      poker-content → bg   Request decision (messages array)
  *   AUTOPILOT_ACTION      bg → poker-content   Decision result (action object)
- *   AUTOPILOT_ENABLED     bg → poker-content   Toggle autopilot on/off
+ *   AUTOPILOT_MODE        bg → poker-content   Apply mode change ("off"|"monitor"|"play")
  *
  * Background ↔ Popup (chrome.runtime messages):
  *   GET_STATUS          popup → bg       Query connection + continuous + autopilot state
  *   CONTINUOUS_START    popup → bg       Start continuous capture
  *   CONTINUOUS_STOP     popup → bg       Stop continuous capture
- *   AUTOPILOT_START     popup → bg       Enable autopilot
- *   AUTOPILOT_STOP      popup → bg       Disable autopilot
+ *   AUTOPILOT_SET_MODE  popup → bg       Set mode: "off" | "monitor" | "play"
  *
  * Content ↔ Page (window.postMessage, source: "poker-assistant-ext"):
  *   EXTENSION_CONNECTED content → page   Extension presence announcement
@@ -145,6 +144,20 @@ async function fetchAutopilotDecision(
     }
 
     const action = await res.json();
+
+    // Validate shape before forwarding to real-money DOM executor (todo 038)
+    const validActions = ["FOLD", "CHECK", "CALL", "RAISE", "BET"];
+    if (
+      !action ||
+      !validActions.includes(action.action) ||
+      (action.amount !== null && typeof action.amount !== "number") ||
+      typeof action.reasoning !== "string"
+    ) {
+      console.error("[BG] Invalid action shape from API:", action);
+      sendFallbackAction("Invalid action shape");
+      return;
+    }
+
     console.log(
       `[BG] Autopilot decision: ${action.action}${action.amount ? ` €${action.amount}` : ""} — ${action.reasoning}`,
     );

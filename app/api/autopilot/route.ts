@@ -8,11 +8,11 @@ export const maxDuration = 15;
 
 const messageSchema = z.object({
   role: z.enum(["user", "assistant"]),
-  content: z.string(),
+  content: z.string().max(4000), // one poker street of context is well under this
 });
 
 const requestSchema = z.object({
-  messages: z.array(messageSchema).min(1),
+  messages: z.array(messageSchema).min(1).max(20), // max ~5 streets × 4 messages
 });
 
 export async function POST(req: Request) {
@@ -33,7 +33,7 @@ export async function POST(req: Request) {
 
   try {
     const { object } = await generateObject({
-      model: anthropic("claude-sonnet-4-20250514"),
+      model: anthropic("claude-sonnet-4-6"),
       schema: autopilotActionSchema,
       system: AUTOPILOT_SYSTEM_PROMPT,
       messages: parsed.data.messages,

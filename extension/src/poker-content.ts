@@ -8,10 +8,11 @@
  * 4. Execute action by clicking DOM buttons
  *
  * Message protocol (poker-content ↔ background):
- *   REGISTER_POKER_TAB    poker-content → bg   Tab registers as the poker tab
+ *   REGISTER_POKER_TAB    poker-content → bg   Tab registers as the poker tab (sent after .table-area found)
  *   UNREGISTER_POKER_TAB  poker-content → bg   Tab unregisters on unload
  *   AUTOPILOT_DECIDE      poker-content → bg   Request decision (messages array)
  *   AUTOPILOT_ACTION      bg → poker-content   Decision result (action object)
+ *   AUTOPILOT_MODE        bg → poker-content   Apply mode change ("off"|"monitor"|"play")
  */
 
 console.log("[Poker] Content script loaded on", window.location.href);
@@ -46,6 +47,7 @@ interface ActionOption {
   amount: string | null;
 }
 
+// Mirror of autopilotActionSchema in lib/ai/autopilot-schema.ts — keep in sync
 interface AutopilotAction {
   action: "FOLD" | "CHECK" | "CALL" | "RAISE" | "BET";
   amount: number | null;
@@ -61,30 +63,6 @@ const SUIT_MAP: Record<string, string> = {
   "♣": "c",
 };
 
-// Also parse from SVG filenames: c=clubs, d=diamonds, h=hearts, s=spades
-const SVG_SUIT_MAP: Record<string, string> = {
-  c: "c",
-  d: "d",
-  h: "h",
-  s: "s",
-};
-
-const SVG_RANK_MAP: Record<string, string> = {
-  a: "A",
-  "2": "2",
-  "3": "3",
-  "4": "4",
-  "5": "5",
-  "6": "6",
-  "7": "7",
-  "8": "8",
-  "9": "9",
-  "10": "10",
-  j: "J",
-  q: "Q",
-  k: "K",
-};
-
 // ── State ──────────────────────────────────────────────────────────────
 
 let autopilotMode: "off" | "monitor" | "play" = "off";
@@ -93,50 +71,60 @@ let currentHandId: string | null = null;
 let handMessages: Array<{ role: "user" | "assistant"; content: string }> = [];
 let lastState: GameState | null = null;
 let lastHeroTurn = false;
+let streetActions: string[] = []; // accumulates opponent actions between hero turns (todo 044)
+let decisionWatchdog: ReturnType<typeof setTimeout> | null = null; // timeout guard (todo 031)
 
 // ── Registration ───────────────────────────────────────────────────────
 
-// Immediate heartbeat — proves script loaded and can reach background
-chrome.runtime.sendMessage(
-  {
-    type: "AUTOPILOT_DEBUG",
-    data: {
-      type: "script_loaded",
-      url: window.location.href,
-      hasTableArea: !!document.querySelector(".table-area"),
-      hasBody: !!document.body,
-      bodyHTML: document.body?.innerHTML?.slice(0, 500) || "(empty)",
-    },
+// Startup debug — no bodyHTML (removed session token leak, todo 034)
+chrome.runtime.sendMessage({
+  type: "AUTOPILOT_DEBUG",
+  data: {
+    type: "script_loaded",
+    url: window.location.href,
+    hasTableArea: !!document.querySelector(".table-area"),
+    hasBody: !!document.body,
   },
-);
+});
 
-chrome.runtime.sendMessage(
-  { type: "REGISTER_POKER_TAB" },
-  (response) => {
-    if (chrome.runtime.lastError) {
-      console.error(
-        "[Poker] Register failed:",
-        chrome.runtime.lastError.message,
-      );
-    } else {
-      console.log("[Poker] Registered:", response);
-    }
-  },
-);
+// REGISTER_POKER_TAB is sent lazily in startObserving() once .table-area is found.
+// This prevents payment/lobby iframes from registering as the poker tab (todo 033).
 
 window.addEventListener("beforeunload", () => {
   chrome.runtime.sendMessage({ type: "UNREGISTER_POKER_TAB" });
 });
 
+// ── Type Guard ─────────────────────────────────────────────────────────
+
+function isAutopilotAction(x: unknown): x is AutopilotAction {
+  if (!x || typeof x !== "object") return false;
+  const a = x as Record<string, unknown>;
+  return (
+    ["FOLD", "CHECK", "CALL", "RAISE", "BET"].includes(a.action as string) &&
+    (a.amount === null || typeof a.amount === "number") &&
+    typeof a.reasoning === "string"
+  );
+}
+
 // ── Message Handling ───────────────────────────────────────────────────
 
 chrome.runtime.onMessage.addListener((message) => {
   if (message.type === "AUTOPILOT_ACTION") {
-    console.log("[Poker] Received action:", message.action);
+    // Validate before executing on real-money DOM (todo 038)
+    if (!isAutopilotAction(message.action)) {
+      console.error("[Poker] Invalid action shape received:", message.action);
+      return;
+    }
     onDecisionReceived(message.action);
   }
 
   if (message.type === "AUTOPILOT_MODE") {
+    // Validate mode before assigning (todo 038)
+    const valid: Array<typeof autopilotMode> = ["off", "monitor", "play"];
+    if (!valid.includes(message.mode)) {
+      console.error("[Poker] Invalid autopilot mode:", message.mode);
+      return;
+    }
     autopilotMode = message.mode;
     console.log("[Poker] Autopilot mode:", autopilotMode);
     if (autopilotMode !== "off") {
@@ -148,14 +136,12 @@ chrome.runtime.onMessage.addListener((message) => {
 // ── DOM Scraping ───────────────────────────────────────────────────────
 
 function parseCardFromSvg(src: string): string | null {
-  // Parse card from SVG filename: "../../resources/images/cards-classic-assets/dq.svg" → "Qd"
-  const match = src.match(/\/([cdhs])(\w+)\.svg$/);
+  // Simplified: regex validates suit + rank in one pass (todo 046 — removed identity maps)
+  // Matches filenames like "../../resources/images/cards-classic-assets/dq.svg"
+  const match = src.match(/\/([cdhs])([a2-9]|10|[jqka])\.svg$/i);
   if (!match) return null;
   const [, suitChar, rankStr] = match;
-  const suit = SVG_SUIT_MAP[suitChar];
-  const rank = SVG_RANK_MAP[rankStr];
-  if (!suit || !rank) return null;
-  return rank + suit;
+  return rankStr.toUpperCase() + suitChar; // a→A, j→J, q→Q, k→K; numbers unchanged
 }
 
 function parseCardFromText(
@@ -176,20 +162,17 @@ function scrapeHeroCards(): string[] {
   const holder = document.querySelector(".cards-holder-hero");
   if (!holder) return cards;
 
-  // Log raw HTML for debugging
-  console.log("[Poker] Hero cards HTML:", holder.outerHTML);
-
   // Try SVG filenames first (more reliable)
   holder.querySelectorAll(".card img.card-image").forEach((img) => {
     const src = img.getAttribute("src") || "";
-    if (src.includes("card-back")) return; // face-down card
+    if (src.includes("card-back")) return;
     const card = parseCardFromSvg(src);
     if (card) cards.push(card);
   });
 
   // Fallback to text nodes if SVG didn't find both cards
   if (cards.length < 2) {
-    cards.length = 0; // reset and try text approach for all
+    cards.length = 0;
     holder.querySelectorAll(".card").forEach((cardEl) => {
       const card = parseCardFromText(
         cardEl.querySelector(".card-rank"),
@@ -210,7 +193,6 @@ function scrapeCommunityCards(): string[] {
   community
     .querySelectorAll(".card:not(.pt-visibility-hidden)")
     .forEach((cardEl) => {
-      // Try SVG first
       const img = cardEl.querySelector("img.card-image");
       if (img) {
         const src = img.getAttribute("src") || "";
@@ -222,7 +204,6 @@ function scrapeCommunityCards(): string[] {
           }
         }
       }
-      // Fallback to text
       const card = parseCardFromText(
         cardEl.querySelector(".card-rank"),
         cardEl.querySelector(".card-suit"),
@@ -236,7 +217,6 @@ function scrapeCommunityCards(): string[] {
 function scrapePlayers(): PlayerState[] {
   const players: PlayerState[] = [];
   document.querySelectorAll(".player-area").forEach((area) => {
-    // Extract seat number from class: "player-seat-N"
     const seatMatch = area.className.match(/player-seat-(\d+)/);
     if (!seatMatch) return;
     const seat = parseInt(seatMatch[1], 10);
@@ -271,7 +251,6 @@ function scrapeHeroSeat(): number {
 }
 
 function scrapeDealerSeat(): number {
-  // Dealer button is visible (no pt-visibility-hidden) on one game-position element
   for (let i = 1; i <= 6; i++) {
     const pos = document.querySelector(
       `.game-position-${i}:not(.pt-visibility-hidden)`,
@@ -307,7 +286,6 @@ function scrapeTimer(): number | null {
 function scrapeIsHeroTurn(): boolean {
   const myPlayer = document.querySelector(".player-area.my-player");
   if (!myPlayer) return false;
-  // Check for turn indicator or countdown on hero's seat
   return !!(
     myPlayer.querySelector(".turn-to-act-indicator") ||
     myPlayer.querySelector(".countdown-text")
@@ -319,20 +297,12 @@ function scrapeAvailableActions(): ActionOption[] {
   const actionsArea = document.querySelector(".actions-area");
   if (!actionsArea) return actions;
 
-  // LOG THE RAW HTML for Phase 0 discovery
-  console.log("[Poker] Actions area HTML:", actionsArea.outerHTML);
-
-  // Try to parse action buttons
   actionsArea.querySelectorAll(".base-button").forEach((btn) => {
     const text = btn.textContent?.trim() || "";
     if (!text) return;
 
     const lowerText = text.toLowerCase();
 
-    // Parse pre-action checkboxes
-    const isPreAction = btn.classList.contains("pre-action");
-
-    // Parse action type from button text
     let type: ActionOption["type"] | null = null;
     let amount: string | null = null;
 
@@ -342,7 +312,6 @@ function scrapeAvailableActions(): ActionOption[] {
       type = "CHECK";
     } else if (lowerText.startsWith("call")) {
       type = "CALL";
-      // Extract amount: "Call €0,04" → "€0,04"
       const amountMatch = text.match(/[€$£]([\d,.]+)/);
       if (amountMatch) amount = amountMatch[0];
     } else if (lowerText.startsWith("raise")) {
@@ -360,11 +329,7 @@ function scrapeAvailableActions(): ActionOption[] {
     }
 
     if (type) {
-      actions.push({
-        type,
-        label: text,
-        amount,
-      });
+      actions.push({ type, label: text, amount });
     }
   });
 
@@ -372,13 +337,7 @@ function scrapeAvailableActions(): ActionOption[] {
 }
 
 function scrapeGameState(): GameState {
-  // Clear pre-action checkboxes (autopilot should never use them)
-  document
-    .querySelectorAll(".pre-action-toggle:checked")
-    .forEach((el) => {
-      (el as HTMLInputElement).checked = false;
-    });
-
+  // Pure read — no DOM mutations here (todo 032 / CQS principle)
   return {
     handId: scrapeHandId(),
     heroCards: scrapeHeroCards(),
@@ -395,7 +354,14 @@ function scrapeGameState(): GameState {
 
 // ── Position Mapping ───────────────────────────────────────────────────
 
-const POSITIONS_6MAX = ["BTN", "SB", "BB", "UTG", "MP", "CO"] as const;
+// Positions ordered clockwise from dealer button (todo 037 — uses activeSeatCount)
+const POSITIONS_BY_COUNT: Record<number, readonly string[]> = {
+  2: ["BTN/SB", "BB"],
+  3: ["BTN", "SB", "BB"],
+  4: ["BTN", "SB", "BB", "UTG"],
+  5: ["BTN", "SB", "BB", "UTG", "CO"],
+  6: ["BTN", "SB", "BB", "UTG", "MP", "CO"],
+};
 
 function getPosition(
   seat: number,
@@ -403,13 +369,10 @@ function getPosition(
   activeSeatCount: number,
 ): string {
   if (dealerSeat < 0 || activeSeatCount < 2) return "??";
-  // Count seats clockwise from dealer
-  // Seats are 1-6 in the Playtech DOM
-  const offset = ((seat - dealerSeat + 6) % 6);
-  if (offset < POSITIONS_6MAX.length) {
-    return POSITIONS_6MAX[offset];
-  }
-  return "??";
+  const count = Math.min(activeSeatCount, 6);
+  const positions = POSITIONS_BY_COUNT[count] ?? POSITIONS_BY_COUNT[6];
+  const offset = ((seat - dealerSeat + count) % count);
+  return offset < positions.length ? positions[offset] : "??";
 }
 
 // ── Conversation Builders ──────────────────────────────────────────────
@@ -424,7 +387,6 @@ function buildHandStartMessage(state: GameState): string {
     `New hand #${state.handId}. ${activePlayers.length}-handed NL Hold'em.`,
   );
 
-  // List all players with positions
   for (const p of state.players) {
     if (!p.name) continue;
     const pos = getPosition(
@@ -440,22 +402,18 @@ function buildHandStartMessage(state: GameState): string {
     );
   }
 
-  // Hero cards
   if (state.heroCards.length > 0) {
     lines.push(`\nHero holds: ${state.heroCards.join(" ")}`);
   }
 
-  // Community cards
   if (state.communityCards.length > 0) {
     lines.push(`Board: ${state.communityCards.join(" ")}`);
   }
 
-  // Pot
   if (state.pot) {
     lines.push(`Pot: ${state.pot}`);
   }
 
-  // Available actions
   if (state.availableActions.length > 0) {
     const opts = state.availableActions.map((a) => a.label).join(", ");
     lines.push(`\nAction to Hero. Options: ${opts}`);
@@ -467,46 +425,29 @@ function buildHandStartMessage(state: GameState): string {
 function buildTurnMessage(state: GameState): string {
   const lines: string[] = [];
 
-  // Report what changed since last state
+  // New community cards
   if (lastState) {
-    // New community cards
-    if (
-      state.communityCards.length > lastState.communityCards.length
-    ) {
-      const newCards = state.communityCards.slice(
-        lastState.communityCards.length,
-      );
+    if (state.communityCards.length > lastState.communityCards.length) {
       const streetName =
         state.communityCards.length === 3
           ? "FLOP"
           : state.communityCards.length === 4
             ? "TURN"
             : "RIVER";
-      lines.push(
-        `${streetName}: ${state.communityCards.join(" ")}`,
-      );
-    }
-
-    // Player action changes (bets, folds)
-    for (const p of state.players) {
-      if (!p.name || p.seat === state.heroSeat) continue;
-      const prev = lastState.players.find((lp) => lp.seat === p.seat);
-      if (!prev) continue;
-
-      if (p.folded && !prev.folded) {
-        lines.push(`${p.name} folds.`);
-      } else if (p.bet !== prev.bet && p.bet) {
-        lines.push(`${p.name} bets/raises to ${p.bet}.`);
-      }
+      lines.push(`${streetName}: ${state.communityCards.join(" ")}`);
     }
   }
 
-  // Current pot
+  // Flush accumulated opponent actions (todo 044 — captured continuously, not just at diff time)
+  if (streetActions.length > 0) {
+    lines.push(...streetActions);
+    streetActions = [];
+  }
+
   if (state.pot) {
     lines.push(`Pot: ${state.pot}`);
   }
 
-  // Available actions
   if (state.availableActions.length > 0) {
     const opts = state.availableActions.map((a) => a.label).join(", ");
     lines.push(`Action to Hero. Options: ${opts}`);
@@ -526,6 +467,16 @@ function requestDecision(
   }
   executing = true;
 
+  // Watchdog: auto-fold if AUTOPILOT_ACTION never arrives (todo 031 — plan specified 12s timeout)
+  const timer = scrapeTimer();
+  const timeoutMs = Math.max(3000, (timer ?? 12) * 1000 - 3000);
+  decisionWatchdog = setTimeout(() => {
+    decisionWatchdog = null;
+    console.warn("[Poker] Decision timeout — auto-fold");
+    executing = false;
+    executeAction({ action: "FOLD", amount: null, reasoning: "Decision timeout" });
+  }, timeoutMs);
+
   console.log("[Poker] Requesting decision. Messages:", messages.length);
   chrome.runtime.sendMessage({
     type: "AUTOPILOT_DECIDE",
@@ -535,18 +486,16 @@ function requestDecision(
 
 // ── Action Execution ───────────────────────────────────────────────────
 
-// Fallback hierarchy for when Claude's action isn't available
+// Fallback hierarchy for FOLD/CHECK/CALL when primary action unavailable
 const FALLBACK_MAP: Record<string, string[]> = {
-  RAISE: ["BET", "ALL_IN", "CALL", "CHECK", "FOLD"],
-  BET: ["RAISE", "ALL_IN", "CALL", "CHECK", "FOLD"],
   CALL: ["CHECK", "FOLD"],
   CHECK: ["FOLD"],
   FOLD: [],
 };
 
 function gaussianRandom(mean: number, stddev: number): number {
-  // Box-Muller transform
-  const u1 = Math.random();
+  // Box-Muller transform; use 1-Math.random() to avoid log(0)
+  const u1 = 1 - Math.random();
   const u2 = Math.random();
   const z = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
   return mean + z * stddev;
@@ -562,13 +511,7 @@ function humanDelay(minMs: number, maxMs: number): Promise<void> {
   return new Promise((r) => setTimeout(r, delay));
 }
 
-function simulateClick(selector: string) {
-  const element = document.querySelector(selector);
-  if (!element) {
-    console.error("[Poker] Click target not found:", selector);
-    return false;
-  }
-
+function simulateClick(element: Element) {
   const rect = element.getBoundingClientRect();
   const x = rect.left + rect.width * (0.3 + Math.random() * 0.4);
   const y = rect.top + rect.height * (0.3 + Math.random() * 0.4);
@@ -587,31 +530,27 @@ function simulateClick(selector: string) {
   element.dispatchEvent(new MouseEvent("mouseup", eventOpts));
   element.dispatchEvent(new MouseEvent("click", eventOpts));
 
-  console.log("[Poker] Clicked:", selector);
+  console.log("[Poker] Clicked:", element.textContent?.trim());
   return true;
 }
 
-function findActionButton(actionType: string): string | null {
-  // Find the button in the actions area matching the action type
+function findActionButton(actionType: string): Element | null {
+  // Returns the Element directly so the reference survives async delays (todo 036)
   const actionsArea = document.querySelector(".actions-area");
   if (!actionsArea) return null;
 
   const buttons = actionsArea.querySelectorAll(".base-button");
-  for (let i = 0; i < buttons.length; i++) {
-    const text = buttons[i].textContent?.trim().toLowerCase() || "";
-    const matchType = actionType.toLowerCase();
+  for (const btn of buttons) {
+    const text = btn.textContent?.trim().toLowerCase() || "";
+    const match = actionType.toLowerCase();
 
-    if (text.startsWith(matchType)) {
-      // Return a selector that uniquely identifies this button
-      return `.actions-area .base-button:nth-child(${i + 1})`;
-    }
+    if (text.startsWith(match)) return btn;
 
-    // Handle ALL_IN → "all-in" or "allin"
     if (
       actionType === "ALL_IN" &&
       (text.includes("all-in") || text.includes("allin"))
     ) {
-      return `.actions-area .base-button:nth-child(${i + 1})`;
+      return btn;
     }
   }
 
@@ -619,38 +558,43 @@ function findActionButton(actionType: string): string | null {
 }
 
 async function executeAction(decision: AutopilotAction) {
-  // Read remaining time for dynamic delay
   const timer = scrapeTimer();
 
-  // Find the action button
-  let selector = findActionButton(decision.action);
+  let button: Element | null;
 
-  // If not found, try fallback hierarchy
-  if (!selector && FALLBACK_MAP[decision.action]) {
-    for (const fallback of FALLBACK_MAP[decision.action]) {
-      selector = findActionButton(fallback);
-      if (selector) {
-        console.log(
-          `[Poker] Action ${decision.action} not available, falling back to ${fallback}`,
-        );
-        break;
+  // RAISE/BET: bet-input not yet implemented — fall back to CALL/CHECK to avoid
+  // executing at the wrong default size (todo 030)
+  if (decision.action === "RAISE" || decision.action === "BET") {
+    console.warn(
+      `[Poker] ${decision.action} €${decision.amount ?? "?"} requested but bet-input entry not yet implemented — falling back to avoid wrong-sized bet`,
+    );
+    button = findActionButton("CALL") ?? findActionButton("CHECK") ?? findActionButton("FOLD");
+    if (button) {
+      console.log("[Poker] RAISE/BET fallback: clicked", button.textContent?.trim());
+    }
+  } else {
+    button = findActionButton(decision.action);
+
+    // Standard fallback chain for FOLD/CHECK/CALL
+    if (!button && FALLBACK_MAP[decision.action]) {
+      for (const fallback of FALLBACK_MAP[decision.action]) {
+        button = findActionButton(fallback);
+        if (button) {
+          console.log(`[Poker] ${decision.action} unavailable, fell back to ${fallback}`);
+          break;
+        }
       }
     }
   }
 
-  // Last resort: fold
-  if (!selector) {
-    selector = findActionButton("FOLD");
-    if (!selector) {
-      console.error("[Poker] No action buttons found at all!");
-      executing = false;
-      return;
-    }
+  if (!button) {
+    console.error("[Poker] No action button found — giving up");
+    executing = false;
+    return;
   }
 
   // Dynamic humanization delay based on remaining timer
   if (timer !== null && timer <= 3) {
-    // Timer critical — click immediately
     console.log("[Poker] Timer critical, clicking immediately");
   } else {
     const maxDelay =
@@ -661,23 +605,48 @@ async function executeAction(decision: AutopilotAction) {
     }
   }
 
-  // TODO: For RAISE/BET, enter amount in the sizing input first
-  // This requires Phase 0 DOM discovery of the bet input
+  // Re-check element is still connected after async delay (todo 036)
+  if (!button.isConnected) {
+    console.warn("[Poker] Button detached during delay — refinding");
+    button = findActionButton(decision.action === "RAISE" || decision.action === "BET"
+      ? "CALL"
+      : decision.action);
+    if (!button) {
+      console.error("[Poker] Button lost after delay, aborting");
+      executing = false;
+      return;
+    }
+  }
 
-  // Click the button
-  simulateClick(selector);
+  simulateClick(button);
   executing = false;
 }
 
 function onDecisionReceived(action: AutopilotAction) {
-  // Record Claude's response in conversation
+  // Cancel timeout watchdog (todo 031)
+  if (decisionWatchdog) {
+    clearTimeout(decisionWatchdog);
+    decisionWatchdog = null;
+  }
+
+  // Clear pre-action checkboxes — play mode only, here not in scrapeGameState (todo 032)
+  if (autopilotMode === "play") {
+    document.querySelectorAll(".pre-action-toggle:checked").forEach((el) => {
+      (el as HTMLInputElement).checked = false;
+    });
+  }
+
+  // Record as readable prose, not raw JSON (todo 041)
+  const actionStr = action.amount != null
+    ? `${action.action} €${action.amount.toFixed(2)}`
+    : action.action;
   handMessages.push({
     role: "assistant",
-    content: JSON.stringify(action),
+    content: `Hero ${actionStr.toLowerCase()}s. ${action.reasoning}`,
   });
 
   console.log(
-    `[Poker] Executing: ${action.action}${action.amount ? ` €${action.amount}` : ""} — ${action.reasoning}`,
+    `[Poker] Executing: ${actionStr} — ${action.reasoning}`,
   );
 
   executeAction(action);
@@ -736,10 +705,10 @@ function updateOverlay(state: GameState) {
 // ── Game State Observer ────────────────────────────────────────────────
 
 let observerActive = false;
+let activeObserver: MutationObserver | null = null; // module-level ref for disconnect (todo 042)
 let debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
 function onDomChange() {
-  // Debounce: wait 200ms for DOM to settle before scraping
   if (debounceTimer) clearTimeout(debounceTimer);
   debounceTimer = setTimeout(() => {
     processGameState();
@@ -750,17 +719,14 @@ let lastDebugTime = 0;
 const DEBUG_THROTTLE_MS = 3000;
 
 function sendDebugLog(data: Record<string, unknown>) {
-  // Route through background script (direct fetch from content script may be blocked)
   chrome.runtime.sendMessage({ type: "AUTOPILOT_DEBUG", data });
 }
 
 function processGameState() {
   const state = scrapeGameState();
 
-  // Update on-page overlay
   updateOverlay(state);
 
-  // In monitor mode, send state updates throttled to every 3s
   if (autopilotMode === "monitor") {
     const now = Date.now();
     if (now - lastDebugTime > DEBUG_THROTTLE_MS) {
@@ -781,20 +747,29 @@ function processGameState() {
     }
   }
 
-  // Log new hand detection
-  if (state.handId && state.handId !== currentHandId) {
-    console.log("[Poker] New hand:", state.handId);
-    console.log("[Poker] Game state:", JSON.stringify(state, null, 2));
+  // Accumulate opponent actions continuously so pot consolidation can't erase them (todo 044)
+  if (lastState) {
+    for (const p of state.players) {
+      if (!p.name || p.seat === state.heroSeat) continue;
+      const prev = lastState.players.find((lp) => lp.seat === p.seat);
+      if (!prev) continue;
+      if (p.folded && !prev.folded) {
+        streetActions.push(`${p.name} folds.`);
+      } else if (p.bet !== prev.bet && p.bet) {
+        streetActions.push(`${p.name} bets/raises to ${p.bet}.`);
+      }
+    }
   }
 
-  // Detect new hand
+  // Detect new hand — single block (todo 047 — merged duplicate condition)
   if (state.handId && state.handId !== currentHandId) {
+    console.log("[Poker] New hand:", state.handId);
     currentHandId = state.handId;
     handMessages = [];
     executing = false;
     lastHeroTurn = false;
+    streetActions = [];
 
-    // Build initial hand context (even if not hero's turn yet)
     if (state.heroCards.length > 0) {
       handMessages.push({
         role: "user",
@@ -803,25 +778,22 @@ function processGameState() {
     }
   }
 
-  // Detect hero's turn
+  // Detect hero's turn (rising edge)
   if (state.isHeroTurn && !lastHeroTurn && !executing && autopilotMode !== "off") {
     console.log("[Poker] Hero's turn detected! Mode:", autopilotMode);
 
-    // If we haven't built the hand start message yet, do it now
     if (handMessages.length === 0 && state.heroCards.length > 0) {
       handMessages.push({
         role: "user",
         content: buildHandStartMessage(state),
       });
     } else if (handMessages.length > 0) {
-      // Append turn-specific delta
       const turnMsg = buildTurnMessage(state);
       if (turnMsg.trim()) {
         handMessages.push({ role: "user", content: turnMsg });
       }
     }
 
-    // In monitor mode, log what Claude would see but don't request a decision
     if (autopilotMode === "monitor") {
       const lastMsg = handMessages[handMessages.length - 1];
       console.log("[Poker] [MONITOR] Would send to Claude:", lastMsg?.content);
@@ -834,7 +806,6 @@ function processGameState() {
       });
     }
 
-    // In play mode, request Claude's decision
     if (autopilotMode === "play" && handMessages.length > 0) {
       requestDecision([...handMessages]);
     }
@@ -845,11 +816,15 @@ function processGameState() {
 }
 
 function startObserving() {
-  if (observerActive) return;
+  // Disconnect previous observer before creating a new one (todo 042)
+  if (activeObserver) {
+    activeObserver.disconnect();
+    activeObserver = null;
+    observerActive = false;
+  }
 
   const tableArea = document.querySelector(".table-area");
   if (!tableArea) {
-    // Log what we DO see to help diagnose
     const bodyClasses = document.body?.className || "(no body)";
     const url = window.location.href;
     console.log(`[Poker] No .table-area found. URL: ${url}, body classes: ${bodyClasses}`);
@@ -858,32 +833,38 @@ function startObserving() {
     return;
   }
 
-  const observer = new MutationObserver(onDomChange);
-  observer.observe(tableArea, {
+  // Register as poker tab only after confirming we're in the game frame (todo 033)
+  // Prevents payment/lobby iframes from overwriting pokerTabId in background
+  chrome.runtime.sendMessage(
+    { type: "REGISTER_POKER_TAB" },
+    (response) => {
+      if (chrome.runtime.lastError) {
+        console.error(
+          "[Poker] Register failed:",
+          chrome.runtime.lastError.message,
+        );
+      } else {
+        console.log("[Poker] Registered as poker tab:", response);
+      }
+    },
+  );
+
+  // Observe only childList + attributes (removed characterData — fires on every timer tick, todo 043)
+  activeObserver = new MutationObserver(onDomChange);
+  activeObserver.observe(tableArea, {
     subtree: true,
     childList: true,
     attributes: true,
-    characterData: true,
+    // characterData removed: timer countdown fires this 100s of times/sec (see todo 043)
   });
 
   observerActive = true;
   console.log("[Poker] MutationObserver started on .table-area");
 
-  // Initial scrape
   processGameState();
 }
 
 // ── Auto-start ─────────────────────────────────────────────────────────
 
-// Always start observing to capture DOM structure for debugging
-// (actual autopilot actions only fire when autopilotEnabled = true)
-function waitForTable() {
-  if (document.querySelector(".table-area")) {
-    startObserving();
-  } else {
-    console.log("[Poker] Waiting for table to load...");
-    setTimeout(waitForTable, 1000);
-  }
-}
-
-waitForTable();
+// startObserving() handles its own retry when .table-area isn't found yet (todo 047)
+startObserving();

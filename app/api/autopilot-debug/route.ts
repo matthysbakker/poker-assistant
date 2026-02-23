@@ -1,23 +1,13 @@
-export async function POST(req: Request) {
-  const data = await req.json();
+// Debug endpoint removed — background.ts AUTOPILOT_DEBUG handler provides
+// the same logging via the extension console without an unauthenticated HTTP endpoint.
+// See extension/src/background.ts lines for the AUTOPILOT_DEBUG message handler.
 
-  console.log("\n========== AUTOPILOT DEBUG ==========");
-  console.log("Type:", data.type);
-  console.log("Hand:", data.handId);
-  console.log("State:", JSON.stringify(data.state, null, 2));
-  if (data.dom?.heroCards) {
-    console.log("\n--- Hero Cards DOM ---");
-    console.log(data.dom.heroCards);
+export async function POST() {
+  if (process.env.NODE_ENV === "production") {
+    return Response.json({ error: "Not found" }, { status: 404 });
   }
-  if (data.dom?.communityCards) {
-    console.log("\n--- Community Cards DOM ---");
-    console.log(data.dom.communityCards);
-  }
-  if (data.dom?.actionsArea) {
-    console.log("\n--- Actions Area DOM ---");
-    console.log(data.dom.actionsArea);
-  }
-  console.log("======================================\n");
-
-  return Response.json({ ok: true });
+  return Response.json(
+    { error: "Debug endpoint disabled. Use background console logging instead." },
+    { status: 410 },
+  );
 }
