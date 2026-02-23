@@ -793,7 +793,7 @@ function updateOverlay(state: GameState) {
     ? `<div style="border-top:1px solid #3f3f46;margin-top:6px;padding-top:6px">
          <span style="color:#818cf8;font-weight:bold">${escapeHtml(lastPersonaRec.name)}</span>
          <span style="color:#e4e4e7"> → ${escapeHtml(lastPersonaRec.action)}</span>
-         <span style="color:#52525b"> [${escapeHtml(lastPersonaRec.temperature.replaceAll("_", "-"))}]</span>
+         ${lastPersonaRec.temperature !== "unknown" ? `<span style="color:#52525b"> [${escapeHtml(lastPersonaRec.temperature.replaceAll("_", "-"))}]</span>` : ""}
        </div>`
     : isPreflop
       ? `<div style="border-top:1px solid #3f3f46;margin-top:6px;padding-top:6px;color:#52525b">Persona: —</div>`
