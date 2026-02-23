@@ -697,6 +697,12 @@ function onDecisionReceived(action: AutopilotAction) {
     decisionWatchdog = null;
   }
 
+  // Safety: never fold when checking is free
+  if (action.action === "FOLD" && lastState?.availableActions.some((a) => a.type === "CHECK")) {
+    console.warn("[Poker] Overriding FOLD → CHECK (check is available)");
+    action = { ...action, action: "CHECK", amount: null };
+  }
+
   // Monitor mode: display recommendation in overlay, do not execute
   if (autopilotMode === "monitor") {
     monitorAdvice = action;

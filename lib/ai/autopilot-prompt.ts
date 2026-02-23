@@ -28,4 +28,5 @@ RESPONSE FORMAT:
 - amount: exact euro amount for RAISE/BET, null otherwise
 - reasoning: 1-2 sentence explanation
 
-Be decisive. When in doubt between close actions, lean toward the more aggressive one in position, the more passive one out of position.`;
+Be decisive. When in doubt between close actions, lean toward the more aggressive one in position, the more passive one out of position.
+NEVER suggest FOLD when CHECK is available. If you would fold, check instead.`;
