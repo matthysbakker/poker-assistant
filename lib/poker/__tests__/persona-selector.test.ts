@@ -21,7 +21,6 @@ describe("selectPersona", () => {
   test("loose_aggressive temperature → GTO Grinder", () => {
     const result = selectPersona("loose_aggressive", "Ah Kd", "BTN");
     expect(result!.persona.id).toBe("gto_grinder");
-    expect(result!.alternatives).toHaveLength(0);
   });
 
   // loose_passive → TAG Shark (single candidate, no rotation)
@@ -29,7 +28,6 @@ describe("selectPersona", () => {
     const result = selectPersona("loose_passive", "Ah Kd", "CO");
     expect(result!.persona.id).toBe("tag_shark");
     expect(result!.rotated).toBe(false);
-    expect(result!.alternatives).toHaveLength(0);
   });
 
   // tight_passive → Exploit Hawk or LAG Assassin (tied, random)
@@ -37,7 +35,6 @@ describe("selectPersona", () => {
     const result = selectPersona("tight_passive", "Ah Kd", "BTN");
     expect(["exploit_hawk", "lag_assassin"]).toContain(result!.persona.id);
     expect(result!.rotated).toBe(true);
-    expect(result!.alternatives).toHaveLength(1);
   });
 
   test("tight_passive rotation — both options reachable", () => {
@@ -68,21 +65,31 @@ describe("selectPersona", () => {
     expect(result!.rotated).toBe(true);
   });
 
+  test("tight_aggressive rotation — both options reachable", () => {
+    const ids = new Set<string>();
+    for (let i = 0; i < 200; i++) {
+      const result = selectPersona("tight_aggressive", "Ah Kd", "CO", Math.random);
+      if (result) ids.add(result.persona.id);
+    }
+    expect(ids.has("gto_grinder")).toBe(true);
+    expect(ids.has("tag_shark")).toBe(true);
+  });
+
+  // All 6 temperatures return non-null for a parseable hand across all positions
+  test.each(["tight_passive", "loose_passive", "tight_aggressive", "loose_aggressive", "balanced", "unknown"] as const)(
+    "temperature %s returns non-null for AKs CO",
+    (temp) => {
+      const result = selectPersona(temp, "Ah Kd", "CO");
+      expect(result).not.toBeNull();
+      expect(["RAISE", "CALL", "FOLD"]).toContain(result!.action);
+    },
+  );
+
   // Returns a valid action from the persona chart
   test("returns correct action from persona chart", () => {
     // AKs from CO is RAISE for all profitable personas
     const result = selectPersona("unknown", "Ah Kd", "CO");
     expect(result!.action).toBe("RAISE");
-  });
-
-  // Alternatives array is populated correctly for tied scenarios
-  test("alternatives array is populated for tied selection", () => {
-    const result = selectPersona("tight_passive", "Ah Kd", "BTN");
-    expect(result!.alternatives).toHaveLength(1);
-    // Alternatives should NOT contain the chosen persona
-    expect(result!.alternatives.map((p) => p.id)).not.toContain(result!.persona.id);
-    // All alternatives should be from the valid candidates
-    expect(["exploit_hawk", "lag_assassin"]).toContain(result!.alternatives[0].id);
   });
 
   // Works for all 6 positions

@@ -1,5 +1,6 @@
 "use client";
 
+import { useMemo } from "react";
 import { getPersonaRecommendations } from "@/lib/poker/persona-lookup";
 import type { ChartPosition, PersonaAction } from "@/lib/poker/personas";
 import type { TableProfile } from "@/lib/poker/table-temperature";
@@ -8,15 +9,6 @@ const ACTION_STYLES: Record<PersonaAction, { bg: string; text: string }> = {
   RAISE: { bg: "bg-emerald-600", text: "text-white" },
   CALL: { bg: "bg-yellow-500", text: "text-black" },
   FOLD: { bg: "bg-red-500", text: "text-white" },
-};
-
-const TEMPERATURE_LABELS: Record<string, string> = {
-  tight_passive: "tight-passive",
-  tight_aggressive: "tight-aggressive",
-  loose_passive: "loose-passive",
-  loose_aggressive: "loose-aggressive",
-  balanced: "balanced",
-  unknown: "unknown",
 };
 
 interface PersonaComparisonProps {
@@ -36,7 +28,10 @@ export function PersonaComparison({
   tableTemperature,
   rotated,
 }: PersonaComparisonProps) {
-  const recommendations = getPersonaRecommendations(heroCards, heroPosition);
+  const recommendations = useMemo(
+    () => getPersonaRecommendations(heroCards, heroPosition),
+    [heroCards, heroPosition],
+  );
   if (!recommendations) return null;
 
   return (
@@ -47,7 +42,7 @@ export function PersonaComparison({
         </h3>
         {tableTemperature && tableTemperature.temperature !== "unknown" ? (
           <span className="rounded-full bg-zinc-800 px-2 py-0.5 text-xs text-zinc-400">
-            {TEMPERATURE_LABELS[tableTemperature.temperature]} · {tableTemperature.reads} reads
+            {tableTemperature.temperature.replace(/_/g, "-")} · {tableTemperature.reads} reads
           </span>
         ) : (
           <span className="text-xs text-zinc-600">Profitable opening ranges</span>

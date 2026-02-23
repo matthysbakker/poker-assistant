@@ -19,11 +19,23 @@ window.addEventListener("beforeunload", () => {
 // Tell the page we're here
 window.postMessage({ source: "poker-assistant-ext", type: "EXTENSION_CONNECTED" }, window.location.origin);
 
-// Respond to pings
+// Relay page → background messages
 window.addEventListener("message", (event) => {
-  if (event.data?.source === "poker-assistant-app" && event.data.type === "PING") {
+  if (event.data?.source !== "poker-assistant-app") return;
+
+  if (event.data.type === "PING") {
     console.log("[Content] Got PING, responding");
     window.postMessage({ source: "poker-assistant-ext", type: "EXTENSION_CONNECTED" }, window.location.origin);
+  }
+
+  // Forward persona recommendation to background, which relays to the poker tab (todo 050)
+  if (event.data.type === "PERSONA_RECOMMENDATION") {
+    chrome.runtime.sendMessage({
+      type: "PERSONA_RECOMMENDATION",
+      personaName: event.data.personaName,
+      action: event.data.action,
+      temperature: event.data.temperature,
+    });
   }
 });
 

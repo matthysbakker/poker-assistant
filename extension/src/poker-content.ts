@@ -138,22 +138,17 @@ chrome.runtime.onMessage.addListener((message) => {
       startObserving();
     }
   }
-});
 
-// ── Page Message Listener (receives PERSONA_RECOMMENDATION from poker-assistant app) ──
-
-window.addEventListener("message", (event) => {
-  if (event.origin !== window.location.origin) return;
-  if (event.data?.source !== "poker-assistant-app") return;
-
-  if (event.data.type === "PERSONA_RECOMMENDATION") {
+  // Persona recommendation relayed from the web app via background (todo 050)
+  if (message.type === "PERSONA_RECOMMENDATION") {
     lastPersonaRec = {
-      name: event.data.personaName,
-      action: event.data.action,
-      temperature: event.data.temperature,
+      name: message.personaName,
+      action: message.action,
+      temperature: message.temperature,
     };
   }
 });
+
 
 // ── DOM Scraping ───────────────────────────────────────────────────────
 
@@ -676,6 +671,15 @@ function onDecisionReceived(action: AutopilotAction) {
 
 // ── Monitor Overlay ────────────────────────────────────────────────────
 
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 let overlayEl: HTMLElement | null = null;
 
 function getOverlay(): HTMLElement {
@@ -707,9 +711,9 @@ function updateOverlay(state: GameState) {
   const modeLabel = autopilotMode === "play" ? "PLAY" : "MONITOR";
   const modeColor = autopilotMode === "play" ? "#c084fc" : "#60a5fa";
 
-  const hero = state.heroCards.length > 0 ? state.heroCards.join(" ") : "—";
-  const board = state.communityCards.length > 0 ? state.communityCards.join(" ") : "—";
-  const actions = state.availableActions.map((a) => a.label).join(" | ") || "—";
+  const hero = state.heroCards.length > 0 ? escapeHtml(state.heroCards.join(" ")) : "—";
+  const board = state.communityCards.length > 0 ? escapeHtml(state.communityCards.join(" ")) : "—";
+  const actions = escapeHtml(state.availableActions.map((a) => a.label).join(" | ") || "—");
   const turn = state.isHeroTurn ? "YES" : "no";
   const turnColor = state.isHeroTurn ? "#4ade80" : "#71717a";
 
@@ -717,9 +721,9 @@ function updateOverlay(state: GameState) {
   const isPreflop = state.communityCards.length === 0 && state.heroCards.length > 0;
   const personaHtml = isPreflop && lastPersonaRec
     ? `<div style="border-top:1px solid #3f3f46;margin-top:6px;padding-top:6px">
-         <span style="color:#818cf8;font-weight:bold">${lastPersonaRec.name}</span>
-         <span style="color:#e4e4e7"> → ${lastPersonaRec.action}</span>
-         <span style="color:#52525b"> [${lastPersonaRec.temperature.replace("_", "-")}]</span>
+         <span style="color:#818cf8;font-weight:bold">${escapeHtml(lastPersonaRec.name)}</span>
+         <span style="color:#e4e4e7"> → ${escapeHtml(lastPersonaRec.action)}</span>
+         <span style="color:#52525b"> [${escapeHtml(lastPersonaRec.temperature.replaceAll("_", "-"))}]</span>
        </div>`
     : isPreflop
       ? `<div style="border-top:1px solid #3f3f46;margin-top:6px;padding-top:6px;color:#52525b">Persona: —</div>`
@@ -727,10 +731,10 @@ function updateOverlay(state: GameState) {
 
   el.innerHTML = `
     <div style="color:${modeColor};font-weight:bold;margin-bottom:4px">${modeLabel}</div>
-    <div>Hand: ${state.handId || "—"}</div>
+    <div>Hand: ${escapeHtml(state.handId || "—")}</div>
     <div>Hero: <b>${hero}</b></div>
     <div>Board: ${board}</div>
-    <div>Pot: ${state.pot || "—"}</div>
+    <div>Pot: ${escapeHtml(state.pot || "—")}</div>
     <div>Turn: <span style="color:${turnColor}">${turn}</span></div>
     <div>Actions: ${actions}</div>
     <div style="color:#71717a;margin-top:4px">Players: ${state.players.filter((p) => p.name).length}</div>
@@ -805,6 +809,7 @@ function processGameState() {
     executing = false;
     lastHeroTurn = false;
     streetActions = [];
+    lastPersonaRec = null;
 
     if (state.heroCards.length > 0) {
       handMessages.push({

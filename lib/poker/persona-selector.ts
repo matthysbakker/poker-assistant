@@ -5,16 +5,16 @@
  * chosen randomly per hand — making the hero's style unreadable to regulars.
  */
 
-import { PERSONAS } from "@/lib/poker/personas";
 import type { Persona, PersonaAction, ChartPosition } from "@/lib/poker/personas";
 import { getPersonaRecommendations } from "@/lib/poker/persona-lookup";
 import type { TableTemperature } from "@/lib/poker/table-temperature";
 
+/** Compile-time guard — must stay in sync with persona IDs in personas.ts */
+type PersonaId = "gto_grinder" | "tag_shark" | "lag_assassin" | "exploit_hawk";
+
 export interface SelectedPersona {
   persona: Persona;
   action: PersonaAction;
-  /** Other equally valid personas for this table (shown in UI as alternatives). */
-  alternatives: Persona[];
   /** True when this was a random pick from multiple tied candidates. */
   rotated: boolean;
 }
@@ -29,7 +29,7 @@ export interface SelectedPersona {
  *   loose_aggressive → GTO Grinder only (balanced, non-exploitable vs maniacs)
  *   balanced/unknown → GTO Grinder (safest default against unknown population)
  */
-const SELECTION_MATRIX: Record<TableTemperature, string[]> = {
+const SELECTION_MATRIX: Record<TableTemperature, PersonaId[]> = {
   tight_passive: ["exploit_hawk", "lag_assassin"],
   loose_passive: ["tag_shark"],
   tight_aggressive: ["gto_grinder", "tag_shark"],
@@ -39,7 +39,7 @@ const SELECTION_MATRIX: Record<TableTemperature, string[]> = {
 };
 
 /** Fallback persona ID when something goes wrong. */
-const FALLBACK_ID = "gto_grinder";
+const FALLBACK_ID: PersonaId = "gto_grinder";
 
 /**
  * Picks the best persona for the given table temperature + hero hand.
@@ -60,41 +60,22 @@ export function selectPersona(
   if (!recs) return null;
 
   const candidateIds = SELECTION_MATRIX[temperature];
-  const candidates = recs.filter((r) => candidateIds.includes(r.persona.id));
+  const candidates = recs.filter((r) => (candidateIds as string[]).includes(r.persona.id));
 
   if (candidates.length === 0) {
     // Safety fallback: always return GTO Grinder
     const fallback = recs.find((r) => r.persona.id === FALLBACK_ID);
     if (!fallback) return null;
-    return {
-      persona: fallback.persona,
-      action: fallback.action,
-      alternatives: [],
-      rotated: false,
-    };
+    return { persona: fallback.persona, action: fallback.action, rotated: false };
   }
 
   if (candidates.length === 1) {
     const [chosen] = candidates;
-    return {
-      persona: chosen.persona,
-      action: chosen.action,
-      alternatives: [],
-      rotated: false,
-    };
+    return { persona: chosen.persona, action: chosen.action, rotated: false };
   }
 
   // Multiple tied candidates — rotate randomly to prevent predictability
   const idx = Math.floor(rng() * candidates.length);
   const chosen = candidates[idx];
-  const alternatives = candidates
-    .filter((_, i) => i !== idx)
-    .map((r) => r.persona);
-
-  return {
-    persona: chosen.persona,
-    action: chosen.action,
-    alternatives,
-    rotated: true,
-  };
+  return { persona: chosen.persona, action: chosen.action, rotated: true };
 }

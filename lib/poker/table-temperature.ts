@@ -26,6 +26,7 @@ export interface TableProfile {
 /** Minimum number of classified opponents needed before we trust the temperature. */
 const MIN_READS = 3;
 
+// Keys must match the inferredType values emitted by lib/ai/schema.ts → Opponent.inferredType
 const TYPE_MAP: Record<string, TableTemperature> = {
   TIGHT_PASSIVE: "tight_passive",
   TIGHT_AGGRESSIVE: "tight_aggressive",

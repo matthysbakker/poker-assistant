@@ -97,7 +97,7 @@ export default function Home() {
 
   // Persona auto-selection — locked per hand, computed at PREFLOP start
   const [selectedPersona, setSelectedPersona] = useState<SelectedPersona | null>(null);
-  const [tableProfile, setTableProfile] = useState<TableProfile | null>(null);
+  const [tableProfile, setTableProfile] = useState<TableProfile | undefined>(undefined);
   const prevStreetRef = useRef(handState.street);
 
   useEffect(() => {
@@ -128,7 +128,6 @@ export default function Home() {
               personaName: selection.persona.name,
               action: selection.action,
               temperature: profile.temperature,
-              reads: profile.reads,
             },
             window.location.origin,
           );
@@ -137,7 +136,7 @@ export default function Home() {
     } else if (handState.street === "WAITING") {
       // Hand ended — clear lock
       setSelectedPersona(null);
-      setTableProfile(null);
+      setTableProfile(undefined);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [handState.street]);
@@ -262,7 +261,7 @@ export default function Home() {
           onOpponentsDetected={handleOpponentsDetected}
           onAnalysisComplete={markAnalysisComplete}
           recommendedPersonaId={selectedPersona?.persona.id}
-          tableTemperature={tableProfile ?? undefined}
+          tableTemperature={tableProfile}
           rotated={selectedPersona?.rotated}
         />
 

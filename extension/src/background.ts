@@ -11,8 +11,9 @@
  *   REGISTER_POKER_TAB    poker-content → bg   Tab registers as the poker tab
  *   UNREGISTER_POKER_TAB  poker-content → bg   Tab unregisters on unload
  *   AUTOPILOT_DECIDE      poker-content → bg   Request decision (messages array)
- *   AUTOPILOT_ACTION      bg → poker-content   Decision result (action object)
- *   AUTOPILOT_MODE        bg → poker-content   Apply mode change ("off"|"monitor"|"play")
+ *   AUTOPILOT_ACTION         bg → poker-content   Decision result (action object)
+ *   AUTOPILOT_MODE           bg → poker-content   Apply mode change ("off"|"monitor"|"play")
+ *   PERSONA_RECOMMENDATION   content → bg → poker-content   Auto-selected persona for current hand
  *
  * Background ↔ Popup (chrome.runtime messages):
  *   GET_STATUS          popup → bg       Query connection + continuous + autopilot state
@@ -286,6 +287,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === "AUTOPILOT_DECIDE") {
     console.log("[BG] Autopilot decision requested");
     fetchAutopilotDecision(message.messages);
+    return;
+  }
+
+  if (message.type === "PERSONA_RECOMMENDATION") {
+    if (pokerTabId) {
+      chrome.tabs.sendMessage(pokerTabId, {
+        type: "PERSONA_RECOMMENDATION",
+        personaName: message.personaName,
+        action: message.action,
+        temperature: message.temperature,
+      });
+    }
     return;
   }
 
