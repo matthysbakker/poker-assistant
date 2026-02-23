@@ -916,7 +916,8 @@ function processGameState() {
       // Fetch persona recommendation for this hand (preflop only)
       if (autopilotMode !== "off" && state.communityCards.length === 0) {
         const activePlayers = state.players.filter((p) => p.name && !p.folded && p.hasCards);
-        const position = getPosition(state.heroSeat, state.dealerSeat, activePlayers.length);
+        const rawPosition = getPosition(state.heroSeat, state.dealerSeat, activePlayers.length);
+        const position = rawPosition === "??" ? "CO" : rawPosition;
         requestPersona(state.heroCards, position);
 
         // Pre-fetch decision for monitor mode — start the API call while others are deciding
@@ -954,6 +955,14 @@ function processGameState() {
         message: lastMsg?.content,
         state,
       });
+    }
+
+    // Fetch persona if not yet set — fallback for when handId detection misses the new hand
+    if (!lastPersonaRec && state.communityCards.length === 0 && state.heroCards.length > 0) {
+      const activePlayers = state.players.filter((p) => p.name && !p.folded && p.hasCards);
+      const rawPosition = getPosition(state.heroSeat, state.dealerSeat, activePlayers.length);
+      const position = rawPosition === "??" ? "CO" : rawPosition;
+      requestPersona(state.heroCards, position);
     }
 
     if (autopilotMode !== "off" && handMessages.length > 0) {
