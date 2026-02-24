@@ -1087,11 +1087,26 @@ function onDecisionReceived(action: AutopilotAction) {
   }
 
   // Also discard if we're still preflop and persona is loaded but the fast-path hasn't
-  // fired yet (pre-fetch arrived before the hero-turn tick processed it). The fast-path
-  // will act on the next tick; letting the pre-fetch through would produce two actions.
+  // fired yet. The fast-path handles RFI spots; when hero is facing a raise the fast-path
+  // is skipped, so we must request a fresh Claude decision instead of just discarding.
   if (lastPersonaRec && lastState && lastState.communityCards.length === 0) {
-    console.log(`[Poker] [${autopilotMode.toUpperCase()}] Discarding pre-fetch — persona chart will handle preflop`);
     executing = false;
+    // If hero is currently facing a raise, the preflop fast-path was skipped (it only
+    // handles RFI). The rising edge was blocked by executing=true during the pre-fetch.
+    // Request a fresh decision now that executing is clear.
+    const facingRaise = lastState.isHeroTurn && lastState.availableActions.some(
+      (a) => a.type === "CALL" && parseFloat((a.amount ?? "0").replace(/[€$£,]/g, "")) > 0,
+    );
+    if (facingRaise && handMessages.length > 0) {
+      console.log(`[Poker] [${autopilotMode.toUpperCase()}] Pre-fetch discarded — facing raise, requesting fresh decision`);
+      const turnMsg = buildTurnMessage(lastState);
+      if (turnMsg.trim()) {
+        handMessages.push({ role: "user", content: turnMsg });
+      }
+      requestDecision([...handMessages]);
+    } else {
+      console.log(`[Poker] [${autopilotMode.toUpperCase()}] Discarding pre-fetch — persona chart will handle preflop`);
+    }
     return;
   }
 
