@@ -1329,10 +1329,11 @@ function processGameState() {
       const personaAction = lastPersonaRec.action.toUpperCase() as AutopilotAction["action"];
       if (["FOLD", "CALL", "RAISE", "BET", "CHECK"].includes(personaAction)) {
         executing = true;
-        // Phase 1: attach euro amount to preflop RAISE from DOM button or default 3x BB
+        // Phase 1: attach euro amount to preflop RAISE from DOM button.
+        // No fallback — if the button has no parseable amount we send null (display "RAISE").
         const raiseBtn = state.availableActions.find((a) => a.type === "RAISE" || a.type === "BET");
         const preflopRaiseEur =
-          raiseBtn?.amount ? parseFloat(raiseBtn.amount.replace(/[€$£,]/g, "")) : 0.06;
+          raiseBtn?.amount ? parseFloat(raiseBtn.amount.replace(/[€$£,]/g, "")) : null;
         const preflopAmount = personaAction === "RAISE" || personaAction === "BET" ? preflopRaiseEur : null;
         console.log(`[Poker] [Local/Preflop] ${lastPersonaRec.name} → ${personaAction}${preflopAmount != null ? ` €${preflopAmount.toFixed(2)}` : ""} (confidence 1.0)`);
         safeExecuteAction(
