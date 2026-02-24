@@ -47,7 +47,7 @@ const WET_SCORE_BET_FRACTIONS: Record<number, number> = {
 };
 
 /** Convert wetScore to a GTO-informed pot-fraction bet size. */
-export function betFractionFromWetScore(wetScore: number): number {
+export function betFractionFromWetScore(wetScore: BoardTexture["wetScore"]): number {
   return WET_SCORE_BET_FRACTIONS[wetScore] ?? 0.50;
 }
 

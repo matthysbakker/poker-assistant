@@ -521,19 +521,12 @@ function deriveTemperatureFromDomStats(
   return isAggressive === false ? "loose_passive" : "loose_aggressive";
 }
 
-/** Maps table temperature dominantType → exploit engine opponent type. */
-function opponentTypeFromTemperature(
-  temp: { dominantType: TableTemperatureLocal; handsObserved: number } | null,
-): PlayerExploitType | undefined {
-  if (!temp) return undefined;
-  const map: Partial<Record<TableTemperatureLocal, PlayerExploitType>> = {
-    loose_passive:    "LOOSE_PASSIVE",
-    tight_passive:    "TIGHT_PASSIVE",
-    loose_aggressive: "LOOSE_AGGRESSIVE",
-    tight_aggressive: "TIGHT_AGGRESSIVE",
-  };
-  return map[temp.dominantType];
-}
+const TEMPERATURE_TO_OPPONENT_TYPE: Partial<Record<TableTemperatureLocal, PlayerExploitType>> = {
+  loose_passive:    "LOOSE_PASSIVE",
+  tight_passive:    "TIGHT_PASSIVE",
+  loose_aggressive: "LOOSE_AGGRESSIVE",
+  tight_aggressive: "TIGHT_AGGRESSIVE",
+};
 
 function scrapeGameState(): GameState {
   // Pure read — no DOM mutations here (todo 032 / CQS principle)
@@ -756,8 +749,8 @@ function localDecide(state: GameState): LocalDecision | null {
 
   // Infer opponent type from table temperature (aggregate VPIP/AF from DOM).
   // Per-seat wiring deferred until CLAUDE_ADVICE → opponentTypes bridge is in place.
-  const opponentType = opponentTypeFromTemperature(lastTableTemperature);
-  const handsObserved = lastTableTemperature?.handsObserved ?? 0;
+  const opponentType = TEMPERATURE_TO_OPPONENT_TYPE[lastTableTemperature.dominantType];
+  const handsObserved = lastTableTemperature.handsObserved;
 
   try {
     return applyRuleTree({
@@ -1215,6 +1208,8 @@ function processGameState() {
     lastHeroTurn = false;
     streetActions = [];
     lastPersonaRec = null;
+    lastTableTemperature = null;   // reset so new hand gets fresh temperature scrape
+    cachedDealerSeat = null;       // dealer button may move between hands
     lastClaudeAdvice = null;
     monitorAdvice = null;
     clearEvalCache();
@@ -1311,6 +1306,17 @@ function processGameState() {
       if (local && local.confidence >= CONFIDENCE_THRESHOLD) {
         executing = true;
         console.log(`[Poker] [Local] ${local.action}${local.amount != null ? ` €${local.amount.toFixed(2)}` : ""} (confidence ${local.confidence.toFixed(2)}) — ${local.reasoning}`);
+        // Forward decision to web app for observability — fire-and-forget via background
+        chrome.runtime.sendMessage({
+          type: "LOCAL_DECISION",
+          payload: {
+            action: local.action,
+            amount: local.amount,
+            confidence: local.confidence,
+            reasoning: local.reasoning,
+            source: "local",
+          },
+        });
         safeExecuteAction(
           { action: local.action, amount: local.amount, reasoning: local.reasoning },
           "local",
