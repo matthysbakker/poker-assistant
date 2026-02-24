@@ -44,7 +44,7 @@ export function analyzeHand(
   }
 
   if (captureMode === "continuous") {
-    userText += "\n\nThis is a live game. Be concise — skip the concept and tip.";
+    userText += "\n\nThis is a live game. Be concise — skip the tip, but always include the concept (2-4 words max).";
   }
 
   const systemPrompt = hasDetectedCards

@@ -51,14 +51,18 @@ export const handAnalysisSchema = z.object({
   heroCards: z
     .string()
     .describe(
-      "Hero's hole cards. If detected cards were provided, use them exactly. " +
-      "Only read from the image if no detection was provided. Format: e.g. 'Ah Kd'"
+      "Hero's hole cards. If 'Detected cards: ...' was provided: copy ONLY those detected cards exactly — " +
+      "do NOT add cards you can see in the image that were not listed in the detection. " +
+      "If a card is missing from detection, write '??' as placeholder, e.g. 'Qc ??'. " +
+      "Only read fully from the image if no detection was provided at all. Format: e.g. 'Ah Kd'"
     ),
   communityCards: z
     .string()
     .describe(
-      "Community cards. If detected cards were provided, use them exactly. " +
-      "Only read from the image if no detection was provided. Format: e.g. 'Qs Jc Th'. Empty string if preflop"
+      "Community cards. If 'Detected cards: ...' was provided: copy ONLY those detected community cards exactly — " +
+      "do NOT add cards you can see in the image that were not listed in the detection. " +
+      "Only read fully from the image if no detection was provided at all. " +
+      "Format: e.g. 'Qs Jc Th'. Empty string if preflop."
     ),
   heroPosition: z
     .enum(["UTG", "MP", "CO", "BTN", "SB", "BB"])
@@ -144,7 +148,7 @@ export const handAnalysisSchema = z.object({
   concept: z
     .string()
     .optional()
-    .describe("The key poker concept at play, e.g. 'Pot Odds', 'Position Advantage', 'Semi-Bluff'. Omit in continuous/fast mode."),
+    .describe("The key poker concept at play, e.g. 'Pot Odds', 'Position Advantage', 'Semi-Bluff'. Keep to 2-4 words. Always include."),
   tip: z
     .string()
     .optional()

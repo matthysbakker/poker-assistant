@@ -6,10 +6,19 @@ function makeOpponents(types: string[]): Record<number, { inferredType: string }
 }
 
 describe("deriveTableTemperature", () => {
-  test("returns unknown with fewer than 3 reads", () => {
+  test("returns unknown with fewer than 2 reads", () => {
     expect(deriveTableTemperature(makeOpponents([])).temperature).toBe("unknown");
     expect(deriveTableTemperature(makeOpponents(["TIGHT_PASSIVE"])).temperature).toBe("unknown");
-    expect(deriveTableTemperature(makeOpponents(["TIGHT_PASSIVE", "LOOSE_AGGRESSIVE"])).temperature).toBe("unknown");
+  });
+
+  test("classifies with exactly 2 reads when one type has strict majority", () => {
+    // 2 reads of same type → 100% majority → temperature declared
+    expect(deriveTableTemperature(makeOpponents(["TIGHT_PASSIVE", "TIGHT_PASSIVE"])).temperature).toBe("tight_passive");
+  });
+
+  test("returns balanced with exactly 2 reads split between types", () => {
+    // 1 + 1 = 50% each → no strict majority → balanced (not unknown)
+    expect(deriveTableTemperature(makeOpponents(["TIGHT_PASSIVE", "LOOSE_AGGRESSIVE"])).temperature).toBe("balanced");
   });
 
   test("returns unknown reads count correctly", () => {

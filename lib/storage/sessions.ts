@@ -17,6 +17,8 @@ export interface PokerSession {
 }
 
 const SESSION_KEY = "poker-session";
+/** Sessions older than this are discarded and a fresh one is started. */
+const SESSION_TTL_MS = 8 * 60 * 60 * 1000; // 8 hours
 
 export function getSession(): PokerSession {
   if (typeof window === "undefined") {
@@ -24,14 +26,20 @@ export function getSession(): PokerSession {
   }
 
   try {
-    const raw = sessionStorage.getItem(SESSION_KEY);
-    if (raw) return JSON.parse(raw) as PokerSession;
+    const raw = localStorage.getItem(SESSION_KEY);
+    if (raw) {
+      const session = JSON.parse(raw) as PokerSession;
+      if (Date.now() - session.startedAt < SESSION_TTL_MS) {
+        return session;
+      }
+      // Stale session — fall through to create a new one
+    }
   } catch {
     // Corrupted data — start fresh
   }
 
   const session = createSession();
-  sessionStorage.setItem(SESSION_KEY, JSON.stringify(session));
+  localStorage.setItem(SESSION_KEY, JSON.stringify(session));
   return session;
 }
 
@@ -77,7 +85,7 @@ export function updateOpponentProfiles(
     }
   }
 
-  sessionStorage.setItem(SESSION_KEY, JSON.stringify(session));
+  localStorage.setItem(SESSION_KEY, JSON.stringify(session));
   return session;
 }
 
@@ -107,6 +115,6 @@ export function getOpponentContext(): Record<
 
 export function resetSession(): PokerSession {
   const session = createSession();
-  sessionStorage.setItem(SESSION_KEY, JSON.stringify(session));
+  localStorage.setItem(SESSION_KEY, JSON.stringify(session));
   return session;
 }
