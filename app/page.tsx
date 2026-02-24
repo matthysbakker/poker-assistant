@@ -18,9 +18,11 @@ import {
 } from "@/lib/storage/sessions";
 import { useContinuousCapture } from "@/lib/hand-tracking";
 import type { HandAnalysis } from "@/lib/ai/schema";
+import type { CaptureContext } from "@/lib/hand-tracking/types";
 
 export default function Home() {
-  const [imageBase64, setImageBase64] = useState<string | null>(null);
+  // Atomic capture state: base64 image and its context are set together so context is never stale.
+  const [pendingCapture, setPendingCapture] = useState<{ base64: string; context: CaptureContext } | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [sessionHandCount, setSessionHandCount] = useState(() => {
     if (typeof window === "undefined") return 0;
@@ -32,14 +34,48 @@ export default function Home() {
   const [handContext, setHandContext] = useState<string | undefined>();
   const [streamKey, setStreamKey] = useState(0);
 
+  // Persona auto-selection — locked per hand, computed at PREFLOP start.
+  // Declared before useContinuousCapture so onAnalysisTrigger can close over them.
+  const [selectedPersona, setSelectedPersona] = useState<SelectedPersona | null>(null);
+  const [tableProfile, setTableProfile] = useState<TableProfile | undefined>(undefined);
+
+  // Stable refs so onAnalysisTrigger always reads the current values without stale closures.
+  const selectedPersonaRef = useRef(selectedPersona);
+  selectedPersonaRef.current = selectedPersona;
+  const tableProfileRef = useRef(tableProfile);
+  tableProfileRef.current = tableProfile;
+
+  // Manual-mode hand ID: generated at capture time (not tied to a confirmed street transition).
+  // Continuous mode uses state-machine.ts for its pokerHandId (post-hysteresis confirmed hand).
+  const manualPokerHandIdRef = useRef<string | null>(null);
+
   // Continuous capture: hand tracking + detection loop + analysis triggers
   const { captureMode, setCaptureMode, switchToManual, handState, handleFrame, markAnalysisComplete, reset: resetCapture } =
     useContinuousCapture({
       onAnalysisTrigger: (base64, context) => {
         setStreamKey((k) => k + 1); // remount to ensure clean stream
         setHandContext(context);
-        setImageBase64(base64);
         setOpponentHistory(getOpponentContext());
+        // Read current persona/profile via refs to avoid stale closure values.
+        // tableProfile and selectedPersona are stable across a hand but locked per PREFLOP.
+        const currentPersona = selectedPersonaRef.current;
+        const currentProfile = tableProfileRef.current;
+        const captureContext: CaptureContext = {
+          sessionId: getSession().id,
+          pokerHandId: handState.pokerHandId,
+          tableTemperature: currentProfile?.temperature ?? null,
+          tableReads: currentProfile?.reads ?? null,
+          heroPosition: handState.heroPosition,
+          personaSelected: currentPersona
+            ? {
+                personaId: currentPersona.persona.id,
+                personaName: currentPersona.persona.name,
+                action: currentPersona.action,
+                temperature: currentProfile?.temperature ?? null,
+              }
+            : null,
+        };
+        setPendingCapture({ base64, context: captureContext });
       },
     });
 
@@ -53,13 +89,42 @@ export default function Home() {
       if (event.origin !== window.location.origin) return;
       if (event.data?.source !== "poker-assistant-ext") return;
 
+      const MAX_BASE64_BYTES = 14_000_000; // ~10 MB as base64
+      if (typeof event.data.base64 !== 'string' || event.data.base64.length > MAX_BASE64_BYTES) {
+        if (event.data.type === "CAPTURE" || event.data.type === "FRAME") {
+          console.warn('[poker-assistant] Rejected oversized or invalid capture payload');
+          return;
+        }
+      }
+
       if (event.data.type === "CAPTURE" && event.data.base64) {
         // Manual hotkey capture → abort any in-flight detection, immediate analysis
         switchToManual();
         setStreamKey((k) => k + 1); // remount AnalysisResult to kill old stream
         setHandContext(undefined);
         setOpponentHistory(getOpponentContext());
-        setImageBase64(event.data.base64);
+        // Manual-mode hand ID: generated at capture time (not tied to a confirmed street transition).
+        // Continuous mode uses state-machine.ts for its pokerHandId (post-hysteresis confirmed hand).
+        const handId = crypto.randomUUID();
+        manualPokerHandIdRef.current = handId;
+        const currentPersona = selectedPersonaRef.current;
+        const currentProfile = tableProfileRef.current;
+        const captureContext: CaptureContext = {
+          sessionId: getSession().id,
+          pokerHandId: handId,
+          tableTemperature: currentProfile?.temperature ?? null,
+          tableReads: currentProfile?.reads ?? null,
+          heroPosition: handState.heroPosition,
+          personaSelected: currentPersona
+            ? {
+                personaId: currentPersona.persona.id,
+                personaName: currentPersona.persona.name,
+                action: currentPersona.action,
+                temperature: currentProfile?.temperature ?? null,
+              }
+            : null,
+        };
+        setPendingCapture({ base64: event.data.base64, context: captureContext });
       } else if (event.data.type === "FRAME" && event.data.base64) {
         // Continuous capture frame → feed to state machine
         setCaptureMode("continuous");
@@ -76,7 +141,7 @@ export default function Home() {
 
   const handleReset = useCallback(() => {
     setOpponentHistory(getOpponentContext());
-    setImageBase64(null);
+    setPendingCapture(null);
     setHandContext(undefined);
     resetCapture();
   }, [resetCapture]);
@@ -115,9 +180,6 @@ export default function Home() {
     }
   }, [markAnalysisComplete]);
 
-  // Persona auto-selection — locked per hand, computed at PREFLOP start
-  const [selectedPersona, setSelectedPersona] = useState<SelectedPersona | null>(null);
-  const [tableProfile, setTableProfile] = useState<TableProfile | undefined>(undefined);
   const prevStreetRef = useRef(handState.street);
 
   useEffect(() => {
@@ -238,7 +300,7 @@ export default function Home() {
         )}
 
         {/* How it works */}
-        {!imageBase64 && !isContinuous && (
+        {!pendingCapture && !isContinuous && (
           <div className="grid grid-cols-3 gap-4 text-center text-sm">
             <div className="rounded-lg bg-card-bg p-4">
               <div className="mb-2 text-2xl">1</div>
@@ -257,7 +319,31 @@ export default function Home() {
 
         {/* Paste zone (hidden during continuous mode) */}
         {!isContinuous && (
-          <PasteZone onImageReady={setImageBase64} disabled={!!imageBase64} />
+          <PasteZone
+            onImageReady={(base64) => {
+              const currentPersona = selectedPersonaRef.current;
+              const currentProfile = tableProfileRef.current;
+              setPendingCapture({
+                base64,
+                context: {
+                  sessionId: getSession().id,
+                  pokerHandId: manualPokerHandIdRef.current,
+                  tableTemperature: currentProfile?.temperature ?? null,
+                  tableReads: currentProfile?.reads ?? null,
+                  heroPosition: handState.heroPosition,
+                  personaSelected: currentPersona
+                    ? {
+                        personaId: currentPersona.persona.id,
+                        personaName: currentPersona.persona.name,
+                        action: currentPersona.action,
+                        temperature: currentProfile?.temperature ?? null,
+                      }
+                    : null,
+                },
+              });
+            }}
+            disabled={!!pendingCapture}
+          />
         )}
 
         {/* Tier 1: Instant detection summary (continuous mode only) */}
@@ -273,7 +359,7 @@ export default function Home() {
         {/* Tier 2: Full Claude analysis */}
         <AnalysisResult
           key={streamKey}
-          imageBase64={imageBase64}
+          imageBase64={pendingCapture?.base64 ?? null}
           opponentHistory={opponentHistory}
           handContext={handContext}
           captureMode={captureMode}
@@ -283,10 +369,11 @@ export default function Home() {
           recommendedPersonaId={selectedPersona?.persona.id}
           tableTemperature={tableProfile}
           rotated={selectedPersona?.rotated}
+          captureContext={pendingCapture?.context ?? null}
         />
 
         {/* Reset button */}
-        {imageBase64 && !isContinuous && (
+        {pendingCapture && !isContinuous && (
           <div className="text-center">
             <button
               onClick={handleReset}

@@ -14,6 +14,7 @@ import { PersonaComparison } from "./PersonaComparison";
 import { PostFlopPanel } from "./PostFlopPanel";
 import type { ChartPosition } from "@/lib/poker/personas";
 import type { TableProfile } from "@/lib/poker/table-temperature";
+import type { CaptureContext } from "@/lib/hand-tracking/types";
 
 interface AnalysisResultProps {
   imageBase64: string | null;
@@ -29,6 +30,7 @@ interface AnalysisResultProps {
   recommendedPersonaId?: string;
   tableTemperature?: TableProfile;
   rotated?: boolean;
+  captureContext: CaptureContext | null;
 }
 
 export function AnalysisResult({
@@ -42,6 +44,7 @@ export function AnalysisResult({
   recommendedPersonaId,
   tableTemperature,
   rotated,
+  captureContext,
 }: AnalysisResultProps) {
   const { object, submit, isLoading, error } = useObject({
     api: "/api/analyze",
@@ -55,8 +58,17 @@ export function AnalysisResult({
     if (imageBase64 && imageBase64 !== submittedRef.current) {
       submittedRef.current = imageBase64;
       savedRef.current = null;
-      submit({ image: imageBase64, opponentHistory, handContext, captureMode });
+      submit({
+        image: imageBase64,
+        opponentHistory,
+        handContext,
+        captureMode,
+        ...(captureContext ?? {}),
+      });
     }
+  // captureContext is intentionally excluded from deps — it is captured atomically
+  // with imageBase64 via setPendingCapture, so it never changes independently.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [imageBase64, submit, opponentHistory, handContext, captureMode]);
 
   // Auto-save and update session when streaming completes

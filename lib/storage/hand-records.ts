@@ -1,7 +1,8 @@
 import { mkdir, writeFile } from "fs/promises";
 import { join } from "path";
 import type { HandAnalysis } from "@/lib/ai/schema";
-import type { CardMatch, DetectionResult } from "@/lib/card-detection/types";
+import type { CardMatch, DetectionResult, Position } from "@/lib/card-detection/types";
+import type { TableTemperature } from "@/lib/poker/table-temperature";
 
 export interface DetectionDetail {
   card: string;
@@ -15,6 +16,10 @@ export interface HandRecord {
   id: string;
   timestamp: string;
   captureMode: "manual" | "continuous";
+
+  // Linkage — groups records into sessions and hands
+  sessionId: string | null;
+  pokerHandId: string | null;
 
   // What the AI saw (inputs)
   screenshotFile: string;
@@ -33,6 +38,18 @@ export interface HandRecord {
       >
     | null;
   systemPromptVariant: "standard" | "with-detected-cards";
+
+  // Table context at time of decision
+  tableTemperature: TableTemperature | null;
+  /** Number of opponents with a classified player type that informed the temperature. */
+  tableReads: number | null;
+  heroPosition: Position | null;
+  personaSelected: {
+    personaId: string;
+    personaName: string;
+    action: string;
+    temperature: TableTemperature | null;
+  } | null;
 
   // What the AI produced (outputs)
   analysis: HandAnalysis;

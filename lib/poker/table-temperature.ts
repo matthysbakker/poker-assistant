@@ -9,13 +9,18 @@
  *   balanced/unknown → GTO Grinder (safe default)
  */
 
-export type TableTemperature =
-  | "tight_passive"
-  | "tight_aggressive"
-  | "loose_passive"
-  | "loose_aggressive"
-  | "balanced"
-  | "unknown";
+import { z } from "zod";
+
+export const tableTemperatureSchema = z.enum([
+  "tight_passive",
+  "tight_aggressive",
+  "loose_passive",
+  "loose_aggressive",
+  "balanced",
+  "unknown",
+]);
+
+export type TableTemperature = z.infer<typeof tableTemperatureSchema>;
 
 export interface TableProfile {
   temperature: TableTemperature;

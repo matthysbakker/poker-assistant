@@ -3,8 +3,9 @@
  *
  * Usage:
  *   bun run scripts/query-hands.ts
- *   bun run scripts/query-hands.ts --json          # raw JSON output
- *   bun run scripts/query-hands.ts --street FLOP   # filter by street
+ *   bun run scripts/query-hands.ts --json             # raw JSON output
+ *   bun run scripts/query-hands.ts --street FLOP      # filter by street
+ *   bun run scripts/query-hands.ts --group-by-hand    # session → hand → street view
  */
 
 import { readdirSync, readFileSync, statSync } from "fs";
@@ -31,10 +32,10 @@ function loadAllRecords(): HandRecord[] {
 
     for (const file of files) {
       try {
-        const raw = readFileSync(join(dirPath, file), "utf-8");
-        records.push(JSON.parse(raw) as HandRecord);
+        const record = JSON.parse(readFileSync(join(dirPath, file), "utf-8")) as HandRecord;
+        records.push(record);
       } catch (err) {
-        console.warn(`[skip] Failed to parse ${dateDir}/${file}:`, err);
+        console.warn(`Skipping malformed record ${file}: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
   }
@@ -60,9 +61,72 @@ function formatDistribution(dist: Record<string, number>, total: number): string
     .join("\n");
 }
 
+function groupByHand(records: HandRecord[]): void {
+  // Group records by sessionId, then by pokerHandId
+  const sessions = new Map<string, Map<string, HandRecord[]>>();
+
+  for (const record of records) {
+    const sessionKey = record.sessionId ?? "unknown-session";
+    const handKey = record.pokerHandId ?? record.id; // fallback: one record = one hand
+
+    if (!sessions.has(sessionKey)) {
+      sessions.set(sessionKey, new Map());
+    }
+    const hands = sessions.get(sessionKey);
+    if (!hands) continue;
+    if (!hands.has(handKey)) {
+      hands.set(handKey, []);
+    }
+    const streetList = hands.get(handKey);
+    if (streetList) streetList.push(record);
+  }
+
+  const STREET_ORDER: Record<string, number> = {
+    PREFLOP: 1,
+    FLOP: 2,
+    TURN: 3,
+    RIVER: 4,
+  };
+
+  console.log("Hand Session View");
+  console.log("─".repeat(60));
+
+  for (const [sessionId, hands] of sessions) {
+    const firstRecord = [...hands.values()][0][0];
+    const sessionDate = firstRecord.timestamp.slice(0, 16).replace("T", " ");
+    const handCount = hands.size;
+    const shortSession = sessionId === "unknown-session" ? sessionId : sessionId.slice(0, 8);
+
+    console.log(`\nSession ${shortSession}… (${sessionDate}, ${handCount} hand${handCount !== 1 ? "s" : ""})`);
+
+    for (const [handId, streetRecords] of hands) {
+      const shortHand = handId.slice(0, 8);
+      const sorted = [...streetRecords].sort(
+        (a, b) => (STREET_ORDER[a.analysis.street ?? ""] ?? 0) - (STREET_ORDER[b.analysis.street ?? ""] ?? 0),
+      );
+
+      console.log(`  Hand ${shortHand}…`);
+
+      for (const r of sorted) {
+        const street = (r.analysis.street ?? "?").padEnd(7);
+        const pos = (r.heroPosition ?? r.analysis.heroPosition ?? "?").padEnd(3);
+        const temp = (r.tableTemperature ?? "?").padEnd(16);
+        const action = r.analysis.action ?? "?";
+        const amount = r.analysis.amount ? ` ${r.analysis.amount}` : "";
+        const conf = r.analysis.confidence ? ` [${r.analysis.confidence}]` : "";
+        const persona = r.personaSelected ? `  persona:${r.personaSelected.personaId}` : "";
+        console.log(`    ${street}  ${pos}  ${temp}  → ${action}${amount}${conf}${persona}`);
+      }
+    }
+  }
+
+  console.log(`\nTotal: ${records.length} records across ${sessions.size} session(s)`);
+}
+
 function main() {
   const args = process.argv.slice(2);
   const jsonMode = args.includes("--json");
+  const groupByHandMode = args.includes("--group-by-hand");
   const streetFilter = args.includes("--street")
     ? args[args.indexOf("--street") + 1]?.toUpperCase()
     : null;
@@ -81,6 +145,11 @@ function main() {
 
   if (jsonMode) {
     console.log(JSON.stringify(records, null, 2));
+    return;
+  }
+
+  if (groupByHandMode) {
+    groupByHand(records);
     return;
   }
 
@@ -128,6 +197,30 @@ function main() {
       records.length,
     ),
   );
+
+  // Table temperature (new field — may be null in older records)
+  const withTemperature = records.filter((r) => r.tableTemperature != null);
+  if (withTemperature.length > 0) {
+    console.log(`\nTable temperature (${withTemperature.length}/${records.length} records):`);
+    console.log(
+      formatDistribution(
+        count(withTemperature, (r) => r.tableTemperature!),
+        withTemperature.length,
+      ),
+    );
+  }
+
+  // Persona selection coverage
+  const withPersona = records.filter((r) => r.personaSelected != null);
+  if (withPersona.length > 0) {
+    console.log(`\nPersona selected (${withPersona.length}/${records.length} records):`);
+    console.log(
+      formatDistribution(
+        count(withPersona, (r) => r.personaSelected!.personaId),
+        withPersona.length,
+      ),
+    );
+  }
 
   // Detection accuracy breakdown
   const allDetails = records.flatMap((r) => r.detectionDetails);
