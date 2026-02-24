@@ -711,6 +711,13 @@ function localDecide(state: GameState): LocalDecision | null {
   // Post-flop only: need ≥ 3 community cards (guard against partial deal animation)
   if (state.communityCards.length < 3 || state.heroCards.length === 0) return null;
 
+  // Temperature is set by requestPersona() which is async — it may not have resolved yet.
+  // Return null (Claude fallback) rather than silently running exploit with unknown opponent.
+  if (!lastTableTemperature) {
+    console.info("[Poker] No table temperature yet — deferring to Claude");
+    return null;
+  }
+
   const heroPlayer = state.players.find((p) => p.seat === state.heroSeat);
   if (!heroPlayer) return null;
 
@@ -945,6 +952,22 @@ async function executeAction(decision: AutopilotAction) {
       }
     }
 
+    // For RAISE/BET: re-validate that the bet input is still present and the amount
+    // is within the allowed range — pot/blinds can change during the humanisation delay
+    if ((decision.action === "RAISE" || decision.action === "BET") && decision.amount !== null) {
+      const betInput = document.querySelector<HTMLInputElement>(".betInput, [data-bet-input]");
+      if (!betInput) {
+        console.warn("[Poker] Bet input gone after delay — aborting raise");
+        return;
+      }
+      const min = parseFloat(betInput.min);
+      const max = parseFloat(betInput.max);
+      if (Number.isFinite(min) && (decision.amount < min || decision.amount > max)) {
+        console.warn(`[Poker] Amount €${decision.amount} out of range [${min}, ${max}] after delay — aborting`);
+        return;
+      }
+    }
+
     simulateClick(button);
   } finally {
     executing = false;
@@ -957,9 +980,9 @@ async function executeAction(decision: AutopilotAction) {
  * Callers set executing=true before calling; this function clears it via executeAction().
  */
 function safeExecuteAction(action: AutopilotAction, source: "claude" | "local" = "claude") {
-  // 1. Safety: never fold when checking is free
+  // 1. Safety: never fold when checking is free — query live DOM, not stale lastState
   let finalAction = action;
-  if (action.action === "FOLD" && lastState?.availableActions.some((a) => a.type === "CHECK")) {
+  if (action.action === "FOLD" && findActionButton("CHECK") !== null) {
     console.warn("[Poker] Overriding FOLD → CHECK (check is available)");
     finalAction = { ...action, action: "CHECK", amount: null };
   }
