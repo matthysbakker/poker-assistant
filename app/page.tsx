@@ -18,6 +18,7 @@ import {
 } from "@/lib/storage/sessions";
 import { useContinuousCapture } from "@/lib/hand-tracking";
 import type { HandAnalysis } from "@/lib/ai/schema";
+import type { CaptureContext } from "@/components/analyzer/AnalysisResult";
 
 export default function Home() {
   const [imageBase64, setImageBase64] = useState<string | null>(null);
@@ -59,6 +60,7 @@ export default function Home() {
         setStreamKey((k) => k + 1); // remount AnalysisResult to kill old stream
         setHandContext(undefined);
         setOpponentHistory(getOpponentContext());
+        manualPokerHandIdRef.current = crypto.randomUUID();
         setImageBase64(event.data.base64);
       } else if (event.data.type === "FRAME" && event.data.base64) {
         // Continuous capture frame → feed to state machine
@@ -120,6 +122,9 @@ export default function Home() {
   const [tableProfile, setTableProfile] = useState<TableProfile | undefined>(undefined);
   const prevStreetRef = useRef(handState.street);
 
+  // Ref for per-hand context captured atomically at analysis trigger time
+  const manualPokerHandIdRef = useRef<string | null>(null);
+
   useEffect(() => {
     const prev = prevStreetRef.current;
     prevStreetRef.current = handState.street;
@@ -163,6 +168,24 @@ export default function Home() {
 
   const isContinuous = captureMode === "continuous";
   const showStreetBadge = isContinuous && handState.street !== "WAITING";
+
+  const captureContext: CaptureContext = {
+    sessionId: getSession().id,
+    pokerHandId: isContinuous
+      ? handState.pokerHandId
+      : manualPokerHandIdRef.current,
+    tableTemperature: tableProfile?.temperature ?? null,
+    tableReads: tableProfile?.reads ?? null,
+    heroPositionCode: handState.heroPosition,
+    personaSelected: selectedPersona
+      ? {
+          personaId: selectedPersona.persona.id,
+          personaName: selectedPersona.persona.name,
+          action: selectedPersona.action,
+          temperature: tableProfile?.temperature ?? null,
+        }
+      : null,
+  };
 
   return (
     <div className="flex min-h-screen flex-col items-center px-4 py-12 font-sans">
@@ -283,6 +306,7 @@ export default function Home() {
           recommendedPersonaId={selectedPersona?.persona.id}
           tableTemperature={tableProfile}
           rotated={selectedPersona?.rotated}
+          captureContext={captureContext}
         />
 
         {/* Reset button */}

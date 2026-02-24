@@ -22,11 +22,37 @@ const opponentHistorySchema = z.record(
   }),
 );
 
+const tableTemperatureSchema = z.enum([
+  "tight_passive",
+  "tight_aggressive",
+  "loose_passive",
+  "loose_aggressive",
+  "balanced",
+  "unknown",
+]);
+
+const positionSchema = z.enum(["UTG", "MP", "CO", "BTN", "SB", "BB"]);
+
 const requestSchema = z.object({
   image: z.string().min(1).max(10_000_000),
   opponentHistory: opponentHistorySchema.optional(),
   handContext: z.string().optional(),
   captureMode: z.enum(["manual", "continuous"]).optional(),
+  // Capture context for hand record enrichment
+  sessionId: z.string().optional(),
+  pokerHandId: z.string().nullable().optional(),
+  tableTemperature: tableTemperatureSchema.nullable().optional(),
+  tableReads: z.number().nullable().optional(),
+  heroPositionCode: positionSchema.nullable().optional(),
+  personaSelected: z
+    .object({
+      personaId: z.string(),
+      personaName: z.string(),
+      action: z.string(),
+      temperature: tableTemperatureSchema.nullable(),
+    })
+    .nullable()
+    .optional(),
 });
 
 export async function POST(req: Request) {
@@ -90,6 +116,8 @@ export async function POST(req: Request) {
           id: handId,
           timestamp,
           captureMode,
+          sessionId: parsed.data.sessionId ?? null,
+          pokerHandId: parsed.data.pokerHandId ?? null,
           screenshotFile: `${timestamp.slice(0, 10)}/${handId}.png`,
           detectedText: detectedCards ?? null,
           detectionDetails: buildDetectionDetails(detection),
@@ -98,6 +126,10 @@ export async function POST(req: Request) {
           systemPromptVariant: detectedCards
             ? "with-detected-cards"
             : "standard",
+          tableTemperature: parsed.data.tableTemperature ?? null,
+          tableReads: parsed.data.tableReads ?? null,
+          heroPositionCode: parsed.data.heroPositionCode ?? null,
+          personaSelected: parsed.data.personaSelected ?? null,
           analysis,
         };
 

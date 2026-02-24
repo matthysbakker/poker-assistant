@@ -33,6 +33,8 @@ export interface HandState {
   analyzing: boolean;
   /** Hero's position at the table (locked on first detection within a hand). */
   heroPosition: Position | null;
+  /** Unique ID for this poker hand — groups all streets together. Generated at WAITING→PREFLOP. */
+  pokerHandId: string | null;
 }
 
 export type HandAction =
