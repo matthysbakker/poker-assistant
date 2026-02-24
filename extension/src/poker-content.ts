@@ -63,6 +63,8 @@ interface AutopilotAction {
 
 // ── Constants ──────────────────────────────────────────────────────────
 
+const SUIT_NAMES: Record<string, string> = { d: "diamonds", h: "hearts", s: "spades", c: "clubs" };
+
 const SUIT_MAP: Record<string, string> = {
   "♠": "s",
   "♥": "h",
@@ -93,7 +95,7 @@ let lastPersonaRec: PersonaRec | null = null;
 let lastTableTemperature: { dominantType: TableTemperatureLocal; handsObserved: number } | null = null;
 let personaRequesting = false; // mutex — prevents concurrent requestPersona() calls
 let cachedDealerSeat: number | null = null; // dealer seat changes once per hand, cache to avoid per-tick queries
-let preflopFastPathFired = false; // true once persona chart fires preflop — prevents stale Claude pre-fetch overwriting it
+let preflopFastPathFired = false; // true once persona chart fires preflop — discards stale Claude pre-fetch in both monitor and play mode
 
 // ── Local Engine Config ─────────────────────────────────────────────────
 
@@ -615,7 +617,6 @@ function buildHandStartMessage(state: GameState): string {
 
   if (state.heroCards.length > 0) {
     const [c1, c2] = state.heroCards;
-    const SUIT_NAMES: Record<string, string> = { d: "diamonds", h: "hearts", s: "spades", c: "clubs" };
     const suitTag =
       state.heroCards.length === 2 && c1 && c2
         ? c1.slice(-1) === c2.slice(-1)
@@ -979,11 +980,18 @@ async function executeAction(decision: AutopilotAction) {
     }
 
     // For RAISE/BET: re-validate that the bet input is still present and the amount
-    // is within the allowed range — pot/blinds can change during the humanisation delay
+    // is within the allowed range — pot/blinds can change during the humanisation delay.
+    // The input may not yet be rendered (Playtech animates buttons); retry up to 3×100ms.
     if ((decision.action === "RAISE" || decision.action === "BET") && decision.amount !== null) {
-      const betInput = document.querySelector<HTMLInputElement>(".betInput, [data-bet-input]");
+      let betInput = document.querySelector<HTMLInputElement>(".betInput, [data-bet-input]");
       if (!betInput) {
-        console.warn("[Poker] Bet input gone after delay — aborting raise");
+        for (let i = 0; i < 3 && !betInput; i++) {
+          await new Promise((r) => setTimeout(r, 100));
+          betInput = document.querySelector<HTMLInputElement>(".betInput, [data-bet-input]");
+        }
+      }
+      if (!betInput) {
+        console.warn("[Poker] Bet input absent after retries — aborting raise");
         return;
       }
       const min = parseFloat(betInput.min);
@@ -1066,9 +1074,18 @@ function onDecisionReceived(action: AutopilotAction) {
   console.log(`[Poker] Claude decided: ${actionStr} — ${action.reasoning}`);
 
   // If the preflop persona chart fast-path already fired, the Claude pre-fetch is stale.
-  // Discard it in monitor mode so it doesn't overwrite the correct persona advice.
-  if (autopilotMode === "monitor" && preflopFastPathFired) {
-    console.log("[Poker] [MONITOR] Discarding stale pre-fetch — preflop fast-path already acted");
+  // Discard it in both monitor and play mode — the same race exists in both.
+  if (preflopFastPathFired) {
+    console.log(`[Poker] [${autopilotMode.toUpperCase()}] Discarding stale pre-fetch — preflop fast-path already acted`);
+    executing = false;
+    return;
+  }
+
+  // Also discard if we're still preflop and persona is loaded but the fast-path hasn't
+  // fired yet (pre-fetch arrived before the hero-turn tick processed it). The fast-path
+  // will act on the next tick; letting the pre-fetch through would produce two actions.
+  if (lastPersonaRec && lastState && lastState.communityCards.length === 0) {
+    console.log(`[Poker] [${autopilotMode.toUpperCase()}] Discarding pre-fetch — persona chart will handle preflop`);
     executing = false;
     return;
   }
@@ -1384,22 +1401,35 @@ function processGameState() {
         preflopFastPathFired = true; // prevent stale pre-fetch from overwriting this advice
         // Compute a strategic raise size from BB rather than reading the DOM slider
         // (action buttons may not be rendered yet when the fast-path fires).
-        // In an unraised pot: pot = SB + BB = 1.5 × BB → BB ≈ pot / 1.5
+        // BB is read from the BB player's posted bet — exact regardless of limpers/antes.
+        // Falls back to pot / 1.5 only when the BB player has no visible bet yet.
         let preflopAmount: number | null = null;
+        let bb: number | null = null;
         if (personaAction === "RAISE" || personaAction === "BET") {
-          const pot = parseCurrency(state.pot);
-          if (pot > 0) {
-            const bb = pot / 1.5;
-            const activePlayers = state.players.filter((p) => p.name && !p.folded && p.hasCards);
-            const rawPos = getPosition(state.heroSeat, state.dealerSeat, activePlayers.length);
-            const pos = rawPos === "BTN/SB" ? "BTN" : rawPos;
-            // Late position (BTN/CO): open 2.5×BB; early/mid/SB: open 3×BB
-            const multiplier = ["BTN", "CO"].includes(pos) ? 2.5 : 3.0;
+          const activePlayers = state.players.filter((p) => p.name && !p.folded && p.hasCards);
+          const rawPos = getPosition(state.heroSeat, state.dealerSeat, activePlayers.length);
+          const pos = rawPos === "BTN/SB" ? "BTN" : rawPos;
+          // Late position (BTN/CO): open 2.5×BB; early/mid/SB: open 3×BB
+          const multiplier = ["BTN", "CO"].includes(pos) ? 2.5 : 3.0;
+          const bbPlayer = state.players.find(
+            (p) => p.name && getPosition(p.seat, state.dealerSeat, activePlayers.length) === "BB"
+          );
+          const bbFromPlayer = bbPlayer ? parseCurrency(bbPlayer.bet) : 0;
+          if (bbFromPlayer > 0) {
+            bb = bbFromPlayer;
+          } else {
+            const pot = parseCurrency(state.pot);
+            if (pot > 0) {
+              bb = pot / 1.5;
+              console.warn("[Poker] [Preflop] BB player bet not visible — falling back to pot / 1.5");
+            }
+          }
+          if (bb !== null && bb > 0) {
             preflopAmount = Math.round(bb * multiplier * 100) / 100;
           }
         }
-        const bbTag = preflopAmount != null && parseCurrency(state.pot) > 0
-          ? ` (${(preflopAmount / (parseCurrency(state.pot) / 1.5)).toFixed(1)}BB)`
+        const bbTag = preflopAmount != null && bb != null
+          ? ` (${(preflopAmount / bb).toFixed(1)}BB)`
           : "";
         console.log(`[Poker] [Local/Preflop] ${lastPersonaRec.name} → ${personaAction}${preflopAmount != null ? ` €${preflopAmount.toFixed(2)}${bbTag}` : ""} (confidence 1.0)`);
         safeExecuteAction(
