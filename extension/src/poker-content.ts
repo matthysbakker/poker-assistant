@@ -15,6 +15,12 @@
  *   AUTOPILOT_MODE        bg → poker-content   Apply mode change ("off"|"monitor"|"play")
  */
 
+import { applyRuleTree } from "../../lib/poker/rule-tree";
+import { clearEvalCache } from "../../lib/poker/hand-evaluator";
+import { clearBoardCache } from "../../lib/poker/board-analyzer";
+import { parseCurrency } from "../../lib/poker/equity/pot-odds";
+import type { LocalDecision } from "../../lib/poker/rule-tree";
+
 console.log("[Poker] Content script loaded on", window.location.href);
 
 // ── Types ──────────────────────────────────────────────────────────────
@@ -81,6 +87,17 @@ interface ClaudeAdvice {
 
 let autopilotMode: "off" | "monitor" | "play" = "off";
 let lastPersonaRec: PersonaRec | null = null;
+
+// ── Local Engine Config ─────────────────────────────────────────────────
+
+let CONFIDENCE_THRESHOLD = 0.60;
+// Allow runtime tuning via chrome.storage.local without reloading the extension
+chrome.storage.local.get("localEngineThreshold", (v) => {
+  if (typeof v["localEngineThreshold"] === "number") {
+    CONFIDENCE_THRESHOLD = v["localEngineThreshold"];
+    console.log("[Poker] Local engine threshold loaded:", CONFIDENCE_THRESHOLD);
+  }
+});
 let lastClaudeAdvice: ClaudeAdvice | null = null;
 let monitorAdvice: AutopilotAction | null = null;
 let executing = false;
@@ -659,6 +676,63 @@ async function requestPersona(heroCards: string[], position: string) {
   }
 }
 
+// ── Local Decision Engine ──────────────────────────────────────────────
+
+/**
+ * Attempt a local rule-based decision for post-flop spots.
+ * Returns null if insufficient information or pre-flop.
+ * Caller falls back to Claude when null or confidence < CONFIDENCE_THRESHOLD.
+ */
+function localDecide(state: GameState): LocalDecision | null {
+  // Post-flop only: need ≥ 3 community cards (guard against partial deal animation)
+  if (state.communityCards.length < 3 || state.heroCards.length === 0) return null;
+
+  const heroPlayer = state.players.find((p) => p.seat === state.heroSeat);
+  if (!heroPlayer) return null;
+
+  const heroStack = parseCurrency(heroPlayer.stack);
+  const activePlayers = state.players.filter(
+    (p) => p.name && !p.folded && p.hasCards,
+  );
+  const opponents = activePlayers.filter((p) => p.seat !== state.heroSeat);
+  const opponentStacks = opponents.map((p) => parseCurrency(p.stack)).filter((s) => s > 0);
+  const minOpponentStack = opponentStacks.length > 0 ? Math.min(...opponentStacks) : heroStack;
+  const effectiveStack = Math.min(heroStack, minOpponentStack);
+
+  const callAction = state.availableActions.find((a) => a.type === "CALL");
+  const callAmount = parseCurrency(callAction?.amount);
+  const facingBet = callAmount > 0;
+
+  // Normalise BTN/SB → BTN for position lookup
+  const rawPosition = getPosition(state.heroSeat, state.dealerSeat, activePlayers.length);
+  const position = rawPosition === "BTN/SB" ? "BTN" : rawPosition;
+
+  const pot = parseCurrency(state.pot);
+
+  // Infer opponent type from session data (best-effort, extension can't access sessionStorage)
+  // For now, use dominant type if available via lastPersonaRec temperature context
+  // (Full opponent modelling from session data requires a postMessage bridge — Phase 4 extension)
+  const opponentType: string | undefined = undefined;
+
+  try {
+    return applyRuleTree({
+      heroCards: state.heroCards,
+      communityCards: state.communityCards,
+      pot,
+      heroStack,
+      effectiveStack,
+      callAmount,
+      facingBet,
+      position,
+      activePlayers: activePlayers.length,
+      opponentType,
+    });
+  } catch (err) {
+    console.error("[Poker] localDecide() threw:", err);
+    return null;
+  }
+}
+
 // ── Decision Request ───────────────────────────────────────────────────
 
 /** Brief post-flop style guidance per persona, prepended to every hand. */
@@ -845,37 +919,47 @@ async function executeAction(decision: AutopilotAction) {
   executing = false;
 }
 
+/**
+ * Single execution point for all autopilot actions (local engine + Claude path).
+ * Handles FOLD→CHECK safety override, monitor-mode intercept, and checkbox clearing.
+ * Callers set executing=true before calling; this function clears it via executeAction().
+ */
+function safeExecuteAction(action: AutopilotAction, source: "claude" | "local" = "claude") {
+  // 1. Safety: never fold when checking is free
+  let finalAction = action;
+  if (action.action === "FOLD" && lastState?.availableActions.some((a) => a.type === "CHECK")) {
+    console.warn("[Poker] Overriding FOLD → CHECK (check is available)");
+    finalAction = { ...action, action: "CHECK", amount: null };
+  }
+
+  // 2. Monitor mode: display recommendation in overlay, do not execute
+  if (autopilotMode === "monitor") {
+    monitorAdvice = finalAction;
+    executing = false;
+    const recStr = finalAction.amount != null
+      ? `${finalAction.action} €${finalAction.amount.toFixed(2)}`
+      : finalAction.action;
+    const tag = source === "local" ? "[Local]" : "[Claude]";
+    console.log(`[Poker] [MONITOR] ${tag} recommends: ${recStr}${finalAction.reasoning ? ` — ${finalAction.reasoning}` : ""}`);
+    if (lastState) updateOverlay(lastState);
+    return;
+  }
+
+  // 3. Clear pre-action checkboxes — play mode only (todo 032)
+  if (autopilotMode === "play") {
+    document.querySelectorAll(".pre-action-toggle:checked").forEach((el) => {
+      (el as HTMLInputElement).checked = false;
+    });
+  }
+
+  executeAction(finalAction);
+}
+
 function onDecisionReceived(action: AutopilotAction) {
   // Cancel timeout watchdog (todo 031)
   if (decisionWatchdog) {
     clearTimeout(decisionWatchdog);
     decisionWatchdog = null;
-  }
-
-  // Safety: never fold when checking is free
-  if (action.action === "FOLD" && lastState?.availableActions.some((a) => a.type === "CHECK")) {
-    console.warn("[Poker] Overriding FOLD → CHECK (check is available)");
-    action = { ...action, action: "CHECK", amount: null };
-  }
-
-  // Monitor mode: display recommendation in overlay, do not execute
-  if (autopilotMode === "monitor") {
-    monitorAdvice = action;
-    executing = false;
-    const recStr = action.amount != null
-      ? `${action.action} €${action.amount.toFixed(2)}`
-      : action.action;
-    console.log(`[Poker] [MONITOR] Claude recommends: ${recStr} — ${action.reasoning}`);
-    // Trigger an overlay refresh with the latest scraped state
-    if (lastState) updateOverlay(lastState);
-    return;
-  }
-
-  // Clear pre-action checkboxes — play mode only, here not in scrapeGameState (todo 032)
-  if (autopilotMode === "play") {
-    document.querySelectorAll(".pre-action-toggle:checked").forEach((el) => {
-      (el as HTMLInputElement).checked = false;
-    });
   }
 
   // Record as readable prose, not raw JSON (todo 041)
@@ -887,11 +971,9 @@ function onDecisionReceived(action: AutopilotAction) {
     content: `Hero ${actionStr.toLowerCase()}s. ${action.reasoning}`,
   });
 
-  console.log(
-    `[Poker] Executing: ${actionStr} — ${action.reasoning}`,
-  );
+  console.log(`[Poker] Claude decided: ${actionStr} — ${action.reasoning}`);
 
-  executeAction(action);
+  safeExecuteAction(action, "claude");
 }
 
 // ── Monitor Overlay ────────────────────────────────────────────────────
@@ -1061,6 +1143,8 @@ function processGameState() {
     lastPersonaRec = null;
     lastClaudeAdvice = null;
     monitorAdvice = null;
+    clearEvalCache();
+    clearBoardCache();
 
     if (state.heroCards.length > 0) {
       handMessages.push({
@@ -1118,6 +1202,52 @@ function processGameState() {
       const rawPosition = getPosition(state.heroSeat, state.dealerSeat, activePlayers.length);
       const position = rawPosition === "??" ? "CO" : rawPosition;
       requestPersona(state.heroCards, position);
+    }
+
+    // Phase 1 — Preflop chart fast-path: skip Claude when we have a clean RFI spot
+    // Guard: preflop only, persona available, and hero is opening (not facing a raise)
+    const isPreflop = state.communityCards.length === 0;
+    const facingRaise = state.availableActions.some(
+      (a) => a.type === "CALL" && parseFloat((a.amount ?? "0").replace(/[€$£,]/g, "")) > 0,
+    );
+    if (
+      autopilotMode !== "off" &&
+      isPreflop &&
+      lastPersonaRec &&
+      !facingRaise &&
+      state.heroCards.length > 0
+    ) {
+      const personaAction = lastPersonaRec.action.toUpperCase() as AutopilotAction["action"];
+      if (["FOLD", "CALL", "RAISE", "BET", "CHECK"].includes(personaAction)) {
+        executing = true;
+        console.log(`[Poker] [Local/Preflop] ${lastPersonaRec.name} → ${personaAction} (confidence 1.0)`);
+        safeExecuteAction(
+          { action: personaAction, amount: null, reasoning: `Preflop chart: ${lastPersonaRec.name}` },
+          "local",
+        );
+        lastHeroTurn = state.isHeroTurn;
+        lastState = state;
+        return;
+      }
+    }
+
+    // Phase 4 — Post-flop local engine fast-path
+    if (autopilotMode !== "off" && state.communityCards.length >= 3) {
+      const local = localDecide(state);
+      if (local && local.confidence >= CONFIDENCE_THRESHOLD) {
+        executing = true;
+        console.log(`[Poker] [Local] ${local.action}${local.amount != null ? ` €${local.amount.toFixed(2)}` : ""} (confidence ${local.confidence.toFixed(2)}) — ${local.reasoning}`);
+        safeExecuteAction(
+          { action: local.action, amount: local.amount, reasoning: local.reasoning },
+          "local",
+        );
+        lastHeroTurn = state.isHeroTurn;
+        lastState = state;
+        return;
+      }
+      if (local) {
+        console.log(`[Poker] [Local] Low confidence (${local.confidence.toFixed(2)}) — falling back to Claude: ${local.reasoning}`);
+      }
     }
 
     if (autopilotMode !== "off" && handMessages.length > 0) {
