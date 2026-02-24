@@ -85,14 +85,17 @@ export function buildDetectionDetails(
 
 export async function writeHandRecord(
   record: HandRecord,
-  imageBuffer: Buffer,
+  imageBuffer?: Buffer,
 ): Promise<void> {
   const date = record.timestamp.slice(0, 10);
   const dir = join(process.cwd(), "data/hands", date);
   await mkdir(dir, { recursive: true });
 
-  await Promise.all([
+  const writes: Promise<void>[] = [
     writeFile(join(dir, `${record.id}.json`), JSON.stringify(record, null, 2)),
-    writeFile(join(dir, `${record.id}.png`), imageBuffer),
-  ]);
+  ];
+  if (imageBuffer && imageBuffer.length > 0) {
+    writes.push(writeFile(join(dir, `${record.id}.png`), imageBuffer));
+  }
+  await Promise.all(writes);
 }

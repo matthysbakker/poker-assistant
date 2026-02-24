@@ -43,6 +43,7 @@ let pokerTabId: number | null = null;
 let autopilotMode: "off" | "monitor" | "play" = "off";
 const AUTOPILOT_API_URL = "http://localhost:3006/api/autopilot";
 const DECISION_API_URL = "http://localhost:3006/api/decision";
+const RECORD_API_URL = "http://localhost:3006/api/record";
 
 console.log("[BG] Background script started");
 
@@ -330,6 +331,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       body: JSON.stringify(message.payload),
     }).catch((err) => {
       console.warn("[BG] LOCAL_DECISION forward failed (server may be off):", err);
+    });
+    return;
+  }
+
+  if (message.type === "PREFLOP_RECORD") {
+    // Store preflop fast-path decision as a hand record.
+    // Fire-and-forget: failure must not block the poker tab.
+    fetch(RECORD_API_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(message.payload),
+    }).catch((err) => {
+      console.warn("[BG] PREFLOP_RECORD failed (server may be off):", err);
     });
     return;
   }

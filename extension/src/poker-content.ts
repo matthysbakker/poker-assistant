@@ -1431,11 +1431,38 @@ function processGameState() {
         const bbTag = preflopAmount != null && bb != null
           ? ` (${(preflopAmount / bb).toFixed(1)}BB)`
           : "";
+        const reasoning = `Preflop chart: ${lastPersonaRec.name}${bbTag}`;
         console.log(`[Poker] [Local/Preflop] ${lastPersonaRec.name} → ${personaAction}${preflopAmount != null ? ` €${preflopAmount.toFixed(2)}${bbTag}` : ""} (confidence 1.0)`);
         safeExecuteAction(
-          { action: personaAction, amount: preflopAmount, reasoning: `Preflop chart: ${lastPersonaRec.name}${bbTag}` },
+          { action: personaAction, amount: preflopAmount, reasoning },
           "local",
         );
+
+        // Store preflop fast-path decision as a hand record (fire-and-forget)
+        {
+          const activePlayers = state.players.filter((p) => p.name && !p.folded && p.hasCards);
+          const rawPos = getPosition(state.heroSeat, state.dealerSeat, activePlayers.length);
+          const pos = rawPos === "??" ? "CO" : rawPos === "BTN/SB" ? "BTN" : rawPos;
+          const heroPlayer = state.players.find((p) => p.seat === state.heroSeat);
+          chrome.runtime.sendMessage({
+            type: "PREFLOP_RECORD",
+            payload: {
+              heroCards: state.heroCards,
+              position: pos,
+              potSize: state.pot ?? null,
+              heroStack: heroPlayer?.stack ?? null,
+              action: personaAction,
+              amount: preflopAmount,
+              reasoning,
+              personaName: lastPersonaRec.name,
+              handContext: handMessages[0]?.content ?? null,
+              pokerHandId: state.handId ?? null,
+              tableTemperature: lastTableTemperature ?? null,
+              tableReads: null,
+            },
+          });
+        }
+
         lastHeroTurn = state.isHeroTurn;
         lastState = state;
         return;
