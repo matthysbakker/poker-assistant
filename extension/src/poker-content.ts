@@ -15,6 +15,13 @@
  *   AUTOPILOT_MODE        bg → poker-content   Apply mode change ("off"|"monitor"|"play")
  */
 
+import { applyRuleTree } from "../../lib/poker/rule-tree";
+import { clearEvalCache } from "../../lib/poker/hand-evaluator";
+import { clearBoardCache } from "../../lib/poker/board-analyzer";
+import { parseCurrency } from "../../lib/poker/equity/pot-odds";
+import type { LocalDecision } from "../../lib/poker/types";
+import type { PlayerExploitType } from "../../lib/poker/exploit";
+
 console.log("[Poker] Content script loaded on", window.location.href);
 
 // ── Types ──────────────────────────────────────────────────────────────
@@ -81,6 +88,20 @@ interface ClaudeAdvice {
 
 let autopilotMode: "off" | "monitor" | "play" = "off";
 let lastPersonaRec: PersonaRec | null = null;
+let lastTableTemperature: { dominantType: TableTemperatureLocal; handsObserved: number } | null = null;
+let personaRequesting = false; // mutex — prevents concurrent requestPersona() calls
+let cachedDealerSeat: number | null = null; // dealer seat changes once per hand, cache to avoid per-tick queries
+
+// ── Local Engine Config ─────────────────────────────────────────────────
+
+let CONFIDENCE_THRESHOLD = 0.60;
+// Allow runtime tuning via chrome.storage.local without reloading the extension
+chrome.storage.local.get("localEngineThreshold", (v) => {
+  if (typeof v["localEngineThreshold"] === "number") {
+    CONFIDENCE_THRESHOLD = v["localEngineThreshold"];
+    console.log("[Poker] Local engine threshold loaded:", CONFIDENCE_THRESHOLD);
+  }
+});
 let lastClaudeAdvice: ClaudeAdvice | null = null;
 let monitorAdvice: AutopilotAction | null = null;
 let executing = false;
@@ -90,6 +111,7 @@ let lastState: GameState | null = null;
 let lastHeroTurn = false;
 let streetActions: string[] = []; // accumulates opponent actions between hero turns (todo 044)
 let decisionWatchdog: ReturnType<typeof setTimeout> | null = null; // timeout guard (todo 031)
+let watchdogToken: { cancelled: boolean } | null = null;           // cancellation token (todo 059)
 
 // ── Registration ───────────────────────────────────────────────────────
 
@@ -118,7 +140,7 @@ function isAutopilotAction(x: unknown): x is AutopilotAction {
   const a = x as Record<string, unknown>;
   return (
     ["FOLD", "CHECK", "CALL", "RAISE", "BET"].includes(a.action as string) &&
-    (a.amount === null || typeof a.amount === "number") &&
+    (a.amount === null || Number.isFinite(a.amount)) &&
     typeof a.reasoning === "string"
   );
 }
@@ -289,11 +311,17 @@ function scrapeHeroSeat(): number {
 }
 
 function scrapeDealerSeat(): number {
+  // Dealer position is stable for an entire hand (~30-90s). Return cached value to avoid
+  // 6 document.querySelector calls on every detection tick.
+  if (cachedDealerSeat !== null) return cachedDealerSeat;
   for (let i = 1; i <= 6; i++) {
     const pos = document.querySelector(
       `.game-position-${i}:not(.pt-visibility-hidden)`,
     );
-    if (pos) return i;
+    if (pos) {
+      cachedDealerSeat = i;
+      return i;
+    }
   }
   return -1;
 }
@@ -385,7 +413,9 @@ function scrapeAvailableActions(): ActionOption[] {
  *   B) <div>VPIP 28</div>  (label and value in same text node)
  */
 function findStatValue(area: Element, label: string): number | null {
-  const all = Array.from(area.querySelectorAll("*"));
+  // Use targeted selectors instead of querySelectorAll("*") which traverses the entire
+  // subtree. HUD stats are shallow — label+value elements are spans or direct children.
+  const all = Array.from(area.querySelectorAll("span, div, td, p"));
   for (const el of all) {
     const ownText = Array.from(el.childNodes)
       .filter((n) => n.nodeType === Node.TEXT_NODE)
@@ -490,6 +520,13 @@ function deriveTemperatureFromDomStats(
   // Loose
   return isAggressive === false ? "loose_passive" : "loose_aggressive";
 }
+
+const TEMPERATURE_TO_OPPONENT_TYPE: Partial<Record<TableTemperatureLocal, PlayerExploitType>> = {
+  loose_passive:    "LOOSE_PASSIVE",
+  tight_passive:    "TIGHT_PASSIVE",
+  loose_aggressive: "LOOSE_AGGRESSIVE",
+  tight_aggressive: "TIGHT_AGGRESSIVE",
+};
 
 function scrapeGameState(): GameState {
   // Pure read — no DOM mutations here (todo 032 / CQS principle)
@@ -624,6 +661,8 @@ const PERSONA_API_URL = "http://localhost:3006/api/persona";
 
 async function requestPersona(heroCards: string[], position: string) {
   if (lastPersonaRec) return; // already set for this hand
+  if (personaRequesting) return; // concurrent call in flight — skip to avoid race overwrite
+  personaRequesting = true;
 
   // Derive temperature from VPIP/AF stats visible in the table DOM
   const tableStats = scrapeTableStats();
@@ -632,6 +671,13 @@ async function requestPersona(heroCards: string[], position: string) {
   if (domTemperature !== "unknown") {
     console.log("[Poker] Table temperature from DOM stats:", domTemperature);
   }
+
+  // Persist temperature for the exploit layer — use VPIP player count as sample proxy
+  const withVpip = tableStats.filter((s) => s.seat !== heroSeat && s.vpip !== null);
+  lastTableTemperature = {
+    dominantType: domTemperature,
+    handsObserved: withVpip.length >= 3 ? 30 : withVpip.length >= 2 ? 15 : withVpip.length >= 1 ? 6 : 0,
+  };
 
   try {
     const res = await fetch(PERSONA_API_URL, {
@@ -656,6 +702,73 @@ async function requestPersona(heroCards: string[], position: string) {
     }
   } catch {
     // Server not running — silently skip
+  } finally {
+    personaRequesting = false;
+  }
+}
+
+// ── Local Decision Engine ──────────────────────────────────────────────
+
+/**
+ * Attempt a local rule-based decision for post-flop spots.
+ * Returns null if insufficient information or pre-flop.
+ * Caller falls back to Claude when null or confidence < CONFIDENCE_THRESHOLD.
+ */
+function localDecide(state: GameState): LocalDecision | null {
+  // Post-flop only: need ≥ 3 community cards (guard against partial deal animation)
+  if (state.communityCards.length < 3 || state.heroCards.length === 0) return null;
+
+  // Temperature is set by requestPersona() which is async — it may not have resolved yet.
+  // Return null (Claude fallback) rather than silently running exploit with unknown opponent.
+  if (!lastTableTemperature) {
+    console.info("[Poker] No table temperature yet — deferring to Claude");
+    return null;
+  }
+
+  const heroPlayer = state.players.find((p) => p.seat === state.heroSeat);
+  if (!heroPlayer) return null;
+
+  const heroStack = parseCurrency(heroPlayer.stack);
+  const activePlayers = state.players.filter(
+    (p) => p.name && !p.folded && p.hasCards,
+  );
+  const opponents = activePlayers.filter((p) => p.seat !== state.heroSeat);
+  const opponentStacks = opponents.map((p) => parseCurrency(p.stack)).filter((s) => s > 0);
+  const minOpponentStack = opponentStacks.length > 0 ? Math.min(...opponentStacks) : heroStack;
+  const effectiveStack = Math.min(heroStack, minOpponentStack);
+
+  const callAction = state.availableActions.find((a) => a.type === "CALL");
+  const callAmount = parseCurrency(callAction?.amount);
+  const facingBet = callAmount > 0;
+
+  // Normalise BTN/SB → BTN for position lookup
+  const rawPosition = getPosition(state.heroSeat, state.dealerSeat, activePlayers.length);
+  const position = rawPosition === "BTN/SB" ? "BTN" : rawPosition;
+
+  const pot = parseCurrency(state.pot);
+
+  // Infer opponent type from table temperature (aggregate VPIP/AF from DOM).
+  // Per-seat wiring deferred until CLAUDE_ADVICE → opponentTypes bridge is in place.
+  const opponentType = TEMPERATURE_TO_OPPONENT_TYPE[lastTableTemperature.dominantType];
+  const handsObserved = lastTableTemperature.handsObserved;
+
+  try {
+    return applyRuleTree({
+      heroCards: state.heroCards,
+      communityCards: state.communityCards,
+      pot,
+      heroStack,
+      effectiveStack,
+      callAmount,
+      facingBet,
+      position,
+      activePlayers: activePlayers.length,
+      opponentType,
+      handsObserved,
+    });
+  } catch (err) {
+    console.error("[Poker] localDecide() threw:", err);
+    return null;
   }
 }
 
@@ -689,10 +802,14 @@ function requestDecision(
     : messages;
 
   // Watchdog: auto-fold if AUTOPILOT_ACTION never arrives (todo 031 — plan specified 12s timeout)
+  // Cancellation token (todo 059): prevents double-action if decision arrives just as timer fires.
   const timer = scrapeTimer();
   const timeoutMs = Math.max(3000, (timer ?? 12) * 1000 - 3000);
+  const token = { cancelled: false };
+  watchdogToken = token;
   decisionWatchdog = setTimeout(() => {
     decisionWatchdog = null;
+    if (token.cancelled) return;
     console.warn("[Poker] Decision timeout");
     executing = false;
     if (autopilotMode === "play") {
@@ -785,97 +902,131 @@ async function executeAction(decision: AutopilotAction) {
 
   let button: Element | null;
 
-  // RAISE/BET: bet-input not yet implemented — fall back to CALL/CHECK to avoid
-  // executing at the wrong default size (todo 030)
-  if (decision.action === "RAISE" || decision.action === "BET") {
-    console.warn(
-      `[Poker] ${decision.action} €${decision.amount ?? "?"} requested but bet-input entry not yet implemented — falling back to avoid wrong-sized bet`,
-    );
-    button = findActionButton("CALL") ?? findActionButton("CHECK") ?? findActionButton("FOLD");
-    if (button) {
-      console.log("[Poker] RAISE/BET fallback: clicked", button.textContent?.trim());
-    }
-  } else {
-    button = findActionButton(decision.action);
+  // try/finally guarantees executing is always cleared, even if an unexpected
+  // exception is thrown (todo 060)
+  try {
+    // RAISE/BET: bet-input not yet implemented — fall back to CALL/CHECK to avoid
+    // executing at the wrong default size (todo 030)
+    if (decision.action === "RAISE" || decision.action === "BET") {
+      console.warn(
+        `[Poker] ${decision.action} €${decision.amount ?? "?"} requested but bet-input entry not yet implemented — falling back to avoid wrong-sized bet`,
+      );
+      button = findActionButton("CALL") ?? findActionButton("CHECK") ?? findActionButton("FOLD");
+      if (button) {
+        console.log("[Poker] RAISE/BET fallback: clicked", button.textContent?.trim());
+      }
+    } else {
+      button = findActionButton(decision.action);
 
-    // Standard fallback chain for FOLD/CHECK/CALL
-    if (!button && FALLBACK_MAP[decision.action]) {
-      for (const fallback of FALLBACK_MAP[decision.action]) {
-        button = findActionButton(fallback);
-        if (button) {
-          console.log(`[Poker] ${decision.action} unavailable, fell back to ${fallback}`);
-          break;
+      // Standard fallback chain for FOLD/CHECK/CALL
+      if (!button && FALLBACK_MAP[decision.action]) {
+        for (const fallback of FALLBACK_MAP[decision.action]) {
+          button = findActionButton(fallback);
+          if (button) {
+            console.log(`[Poker] ${decision.action} unavailable, fell back to ${fallback}`);
+            break;
+          }
         }
       }
     }
-  }
 
-  if (!button) {
-    console.error("[Poker] No action button found — giving up");
-    executing = false;
-    return;
-  }
-
-  // Dynamic humanization delay based on remaining timer
-  if (timer !== null && timer <= 3) {
-    console.log("[Poker] Timer critical, clicking immediately");
-  } else {
-    const maxDelay =
-      timer !== null ? Math.min(8000, (timer - 3) * 1000) : 8000;
-    const minDelay = Math.min(1500, maxDelay);
-    if (maxDelay > minDelay) {
-      await humanDelay(minDelay, maxDelay);
-    }
-  }
-
-  // Re-check element is still connected after async delay (todo 036)
-  if (!button.isConnected) {
-    console.warn("[Poker] Button detached during delay — refinding");
-    button = findActionButton(decision.action === "RAISE" || decision.action === "BET"
-      ? "CALL"
-      : decision.action);
     if (!button) {
-      console.error("[Poker] Button lost after delay, aborting");
-      executing = false;
+      console.error("[Poker] No action button found — giving up");
       return;
     }
-  }
 
-  simulateClick(button);
-  executing = false;
+    // Dynamic humanization delay based on remaining timer
+    if (timer !== null && timer <= 3) {
+      console.log("[Poker] Timer critical, clicking immediately");
+    } else {
+      const maxDelay =
+        timer !== null ? Math.min(8000, (timer - 3) * 1000) : 8000;
+      const minDelay = Math.min(1500, maxDelay);
+      if (maxDelay > minDelay) {
+        await humanDelay(minDelay, maxDelay);
+      }
+    }
+
+    // Re-check element is still connected after async delay (todo 036)
+    if (!button.isConnected) {
+      console.warn("[Poker] Button detached during delay — refinding");
+      button = findActionButton(decision.action === "RAISE" || decision.action === "BET"
+        ? "CALL"
+        : decision.action);
+      if (!button) {
+        console.error("[Poker] Button lost after delay, aborting");
+        return;
+      }
+    }
+
+    // For RAISE/BET: re-validate that the bet input is still present and the amount
+    // is within the allowed range — pot/blinds can change during the humanisation delay
+    if ((decision.action === "RAISE" || decision.action === "BET") && decision.amount !== null) {
+      const betInput = document.querySelector<HTMLInputElement>(".betInput, [data-bet-input]");
+      if (!betInput) {
+        console.warn("[Poker] Bet input gone after delay — aborting raise");
+        return;
+      }
+      const min = parseFloat(betInput.min);
+      const max = parseFloat(betInput.max);
+      if (Number.isFinite(min) && (decision.amount < min || decision.amount > max)) {
+        console.warn(`[Poker] Amount €${decision.amount} out of range [${min}, ${max}] after delay — aborting`);
+        return;
+      }
+    }
+
+    simulateClick(button);
+  } finally {
+    executing = false;
+  }
 }
 
-function onDecisionReceived(action: AutopilotAction) {
-  // Cancel timeout watchdog (todo 031)
-  if (decisionWatchdog) {
-    clearTimeout(decisionWatchdog);
-    decisionWatchdog = null;
-  }
-
-  // Safety: never fold when checking is free
-  if (action.action === "FOLD" && lastState?.availableActions.some((a) => a.type === "CHECK")) {
+/**
+ * Single execution point for all autopilot actions (local engine + Claude path).
+ * Handles FOLD→CHECK safety override, monitor-mode intercept, and checkbox clearing.
+ * Callers set executing=true before calling; this function clears it via executeAction().
+ */
+function safeExecuteAction(action: AutopilotAction, source: "claude" | "local" = "claude") {
+  // 1. Safety: never fold when checking is free — query live DOM, not stale lastState
+  let finalAction = action;
+  if (action.action === "FOLD" && findActionButton("CHECK") !== null) {
     console.warn("[Poker] Overriding FOLD → CHECK (check is available)");
-    action = { ...action, action: "CHECK", amount: null };
+    finalAction = { ...action, action: "CHECK", amount: null };
   }
 
-  // Monitor mode: display recommendation in overlay, do not execute
+  // 2. Monitor mode: display recommendation in overlay, do not execute
   if (autopilotMode === "monitor") {
-    monitorAdvice = action;
+    monitorAdvice = finalAction;
     executing = false;
-    const recStr = action.amount != null
-      ? `${action.action} €${action.amount.toFixed(2)}`
-      : action.action;
-    console.log(`[Poker] [MONITOR] Claude recommends: ${recStr} — ${action.reasoning}`);
-    // Trigger an overlay refresh with the latest scraped state
+    const recStr = finalAction.amount != null
+      ? `${finalAction.action} €${finalAction.amount.toFixed(2)}`
+      : finalAction.action;
+    const tag = source === "local" ? "[Local]" : "[Claude]";
+    console.log(`[Poker] [MONITOR] ${tag} recommends: ${recStr}${finalAction.reasoning ? ` — ${finalAction.reasoning}` : ""}`);
     if (lastState) updateOverlay(lastState);
     return;
   }
 
-  // Clear pre-action checkboxes — play mode only, here not in scrapeGameState (todo 032)
+  // 3. Clear pre-action checkboxes — play mode only (todo 032)
   if (autopilotMode === "play") {
     document.querySelectorAll(".pre-action-toggle:checked").forEach((el) => {
       (el as HTMLInputElement).checked = false;
     });
+  }
+
+  executeAction(finalAction);
+}
+
+function onDecisionReceived(action: AutopilotAction) {
+  // Cancel timeout watchdog — token must be cancelled before clearTimeout in case
+  // the timer already fired and its callback is queued (todo 031, todo 059)
+  if (watchdogToken) {
+    watchdogToken.cancelled = true;
+    watchdogToken = null;
+  }
+  if (decisionWatchdog) {
+    clearTimeout(decisionWatchdog);
+    decisionWatchdog = null;
   }
 
   // Record as readable prose, not raw JSON (todo 041)
@@ -887,11 +1038,9 @@ function onDecisionReceived(action: AutopilotAction) {
     content: `Hero ${actionStr.toLowerCase()}s. ${action.reasoning}`,
   });
 
-  console.log(
-    `[Poker] Executing: ${actionStr} — ${action.reasoning}`,
-  );
+  console.log(`[Poker] Claude decided: ${actionStr} — ${action.reasoning}`);
 
-  executeAction(action);
+  safeExecuteAction(action, "claude");
 }
 
 // ── Monitor Overlay ────────────────────────────────────────────────────
@@ -1059,8 +1208,12 @@ function processGameState() {
     lastHeroTurn = false;
     streetActions = [];
     lastPersonaRec = null;
+    lastTableTemperature = null;   // reset so new hand gets fresh temperature scrape
+    cachedDealerSeat = null;       // dealer button may move between hands
     lastClaudeAdvice = null;
     monitorAdvice = null;
+    clearEvalCache();
+    clearBoardCache();
 
     if (state.heroCards.length > 0) {
       handMessages.push({
@@ -1118,6 +1271,63 @@ function processGameState() {
       const rawPosition = getPosition(state.heroSeat, state.dealerSeat, activePlayers.length);
       const position = rawPosition === "??" ? "CO" : rawPosition;
       requestPersona(state.heroCards, position);
+    }
+
+    // Phase 1 — Preflop chart fast-path: skip Claude when we have a clean RFI spot
+    // Guard: preflop only, persona available, and hero is opening (not facing a raise)
+    const isPreflop = state.communityCards.length === 0;
+    const facingRaise = state.availableActions.some(
+      (a) => a.type === "CALL" && parseFloat((a.amount ?? "0").replace(/[€$£,]/g, "")) > 0,
+    );
+    if (
+      autopilotMode !== "off" &&
+      isPreflop &&
+      lastPersonaRec &&
+      !facingRaise &&
+      state.heroCards.length > 0
+    ) {
+      const personaAction = lastPersonaRec.action.toUpperCase() as AutopilotAction["action"];
+      if (["FOLD", "CALL", "RAISE", "BET", "CHECK"].includes(personaAction)) {
+        executing = true;
+        console.log(`[Poker] [Local/Preflop] ${lastPersonaRec.name} → ${personaAction} (confidence 1.0)`);
+        safeExecuteAction(
+          { action: personaAction, amount: null, reasoning: `Preflop chart: ${lastPersonaRec.name}` },
+          "local",
+        );
+        lastHeroTurn = state.isHeroTurn;
+        lastState = state;
+        return;
+      }
+    }
+
+    // Phase 4 — Post-flop local engine fast-path
+    if (autopilotMode !== "off" && state.communityCards.length >= 3) {
+      const local = localDecide(state);
+      if (local && local.confidence >= CONFIDENCE_THRESHOLD) {
+        executing = true;
+        console.log(`[Poker] [Local] ${local.action}${local.amount != null ? ` €${local.amount.toFixed(2)}` : ""} (confidence ${local.confidence.toFixed(2)}) — ${local.reasoning}`);
+        // Forward decision to web app for observability — fire-and-forget via background
+        chrome.runtime.sendMessage({
+          type: "LOCAL_DECISION",
+          payload: {
+            action: local.action,
+            amount: local.amount,
+            confidence: local.confidence,
+            reasoning: local.reasoning,
+            source: "local",
+          },
+        });
+        safeExecuteAction(
+          { action: local.action, amount: local.amount, reasoning: local.reasoning },
+          "local",
+        );
+        lastHeroTurn = state.isHeroTurn;
+        lastState = state;
+        return;
+      }
+      if (local) {
+        console.log(`[Poker] [Local] Low confidence (${local.confidence.toFixed(2)}) — falling back to Claude: ${local.reasoning}`);
+      }
     }
 
     if (autopilotMode !== "off" && handMessages.length > 0) {

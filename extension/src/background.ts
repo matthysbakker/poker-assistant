@@ -42,6 +42,7 @@ let pokerWindowId: number | null = null;
 let pokerTabId: number | null = null;
 let autopilotMode: "off" | "monitor" | "play" = "off";
 const AUTOPILOT_API_URL = "http://localhost:3006/api/autopilot";
+const DECISION_API_URL = "http://localhost:3006/api/decision";
 
 console.log("[BG] Background script started");
 
@@ -151,7 +152,7 @@ async function fetchAutopilotDecision(
     if (
       !action ||
       !validActions.includes(action.action) ||
-      (action.amount !== null && typeof action.amount !== "number") ||
+      (action.amount !== null && !Number.isFinite(action.amount)) ||
       typeof action.reasoning !== "string"
     ) {
       console.error("[BG] Invalid action shape from API:", action);
@@ -285,6 +286,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.type === "AUTOPILOT_DECIDE") {
+    if (sender.tab?.id !== pokerTabId) {
+      console.warn("[BG] AUTOPILOT_DECIDE from unregistered tab, ignoring");
+      return;
+    }
     console.log("[BG] Autopilot decision requested");
     fetchAutopilotDecision(message.messages);
     return;
@@ -313,6 +318,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         spr: message.spr,
       });
     }
+    return;
+  }
+
+  if (message.type === "LOCAL_DECISION") {
+    // Forward local engine decision to the web app for logging and agent observability.
+    // Fire-and-forget: failure here must not block the poker tab's autopilot path.
+    fetch(DECISION_API_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(message.payload),
+    }).catch((err) => {
+      console.warn("[BG] LOCAL_DECISION forward failed (server may be off):", err);
+    });
     return;
   }
 

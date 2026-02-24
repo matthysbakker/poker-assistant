@@ -21,6 +21,7 @@ window.postMessage({ source: "poker-assistant-ext", type: "EXTENSION_CONNECTED" 
 
 // Relay page → background messages
 window.addEventListener("message", (event) => {
+  if (event.origin !== window.location.origin) return;
   if (event.data?.source !== "poker-assistant-app") return;
 
   if (event.data.type === "PING") {
