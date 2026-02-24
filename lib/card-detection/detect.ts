@@ -101,12 +101,18 @@ function formatDetectionSummary(
     parts.push(`Hero position: ${position}`);
   }
 
-  if (hero.length > 0) {
-    parts.push(`Hero: ${hero.map((m) => m.card ?? "[unreadable]").join(" ")}`);
+  const trusted = (matches: CardMatch[]) =>
+    matches.filter((m) => m.confidence === "HIGH" || m.confidence === "MEDIUM");
+
+  const trustedHero = trusted(hero);
+  const trustedCommunity = trusted(community);
+
+  if (trustedHero.length > 0) {
+    parts.push(`Hero: ${trustedHero.map((m) => m.card ?? "[unreadable]").join(" ")}`);
   }
 
-  if (community.length > 0) {
-    parts.push(`Board: ${community.map((m) => m.card ?? "[unreadable]").join(" ")}`);
+  if (trustedCommunity.length > 0) {
+    parts.push(`Board: ${trustedCommunity.map((m) => m.card ?? "[unreadable]").join(" ")}`);
   }
 
   return parts.join(", ");

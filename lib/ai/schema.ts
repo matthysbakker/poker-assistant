@@ -147,8 +147,8 @@ export const handAnalysisSchema = z.object({
     ),
   concept: z
     .string()
-    .optional()
-    .describe("The key poker concept at play, e.g. 'Pot Odds', 'Position Advantage', 'Semi-Bluff'. Keep to 2-4 words. Always include."),
+    .min(2)
+    .describe("The key poker concept at play, e.g. 'Pot Odds', 'Position Advantage', 'Semi-Bluff'. Keep to 2-4 words."),
   tip: z
     .string()
     .optional()
