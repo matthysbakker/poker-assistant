@@ -16,6 +16,7 @@
  */
 
 import { applyRuleTree } from "../../lib/poker/rule-tree";
+import { facingRaiseDecision } from "../../lib/poker/facing-raise";
 import { clearEvalCache } from "../../lib/poker/hand-evaluator";
 import { clearBoardCache } from "../../lib/poker/board-analyzer";
 import { parseCurrency } from "../../lib/poker/equity/pot-odds";
@@ -100,14 +101,6 @@ let preflopFastPathFired = false; // true once persona chart fires preflop — d
 
 // ── Local Engine Config ─────────────────────────────────────────────────
 
-let CONFIDENCE_THRESHOLD = 0.60;
-// Allow runtime tuning via chrome.storage.local without reloading the extension
-chrome.storage.local.get("localEngineThreshold", (v) => {
-  if (typeof v["localEngineThreshold"] === "number") {
-    CONFIDENCE_THRESHOLD = v["localEngineThreshold"];
-    console.log("[Poker] Local engine threshold loaded:", CONFIDENCE_THRESHOLD);
-  }
-});
 let lastClaudeAdvice: ClaudeAdvice | null = null;
 let monitorAdvice: AutopilotAction | null = null;
 let executing = false;
@@ -738,9 +731,8 @@ async function requestPersona(heroCards: string[], position: string) {
 // ── Local Decision Engine ──────────────────────────────────────────────
 
 /**
- * Attempt a local rule-based decision for post-flop spots.
- * Returns null if insufficient information or pre-flop.
- * Caller falls back to Claude when null or confidence < CONFIDENCE_THRESHOLD.
+ * Apply the local rule tree for post-flop spots.
+ * Returns null only when called pre-flop (< 3 community cards) or no hero cards.
  */
 function localDecide(state: GameState): LocalDecision | null {
   // Post-flop only: need ≥ 3 community cards (guard against partial deal animation)
@@ -1078,9 +1070,16 @@ function onDecisionReceived(action: AutopilotAction) {
 
   console.log(`[Poker] Claude decided: ${actionStr} — ${action.reasoning}`);
 
+  // Check if hero is currently facing a raise — the fast-path only handles RFI spots,
+  // so any decision arriving while facing a raise is a legitimate explicit request.
+  const heroFacingRaiseNow = lastState?.availableActions.some(
+    (a) => a.type === "CALL" && parseFloat((a.amount ?? "0").replace(/[€$£,]/g, "")) > 0,
+  ) ?? false;
+
   // If the preflop persona chart fast-path already fired, the Claude pre-fetch is stale.
   // Discard it in both monitor and play mode — the same race exists in both.
-  if (preflopFastPathFired) {
+  // Exception: hero is facing a raise → fast-path was bypassed, this is a real decision.
+  if (preflopFastPathFired && !heroFacingRaiseNow) {
     console.log(`[Poker] [${autopilotMode.toUpperCase()}] Discarding stale pre-fetch — preflop fast-path already acted`);
     executing = false;
     return;
@@ -1089,23 +1088,21 @@ function onDecisionReceived(action: AutopilotAction) {
   // Also discard if we're still preflop and persona is loaded but the fast-path hasn't
   // fired yet. The fast-path handles RFI spots; when hero is facing a raise the fast-path
   // is skipped, so we must request a fresh Claude decision instead of just discarding.
-  if (lastPersonaRec && lastState && lastState.communityCards.length === 0) {
+  if (lastPersonaRec && lastState && lastState.communityCards.length === 0 && !heroFacingRaiseNow) {
+    console.log(`[Poker] [${autopilotMode.toUpperCase()}] Discarding pre-fetch — persona chart will handle preflop`);
     executing = false;
-    // If hero is currently facing a raise, the preflop fast-path was skipped (it only
-    // handles RFI). The rising edge was blocked by executing=true during the pre-fetch.
-    // Request a fresh decision now that executing is clear.
-    const facingRaise = lastState.isHeroTurn && lastState.availableActions.some(
-      (a) => a.type === "CALL" && parseFloat((a.amount ?? "0").replace(/[€$£,]/g, "")) > 0,
-    );
-    if (facingRaise && handMessages.length > 0) {
+    return;
+  }
+
+  // Pre-fetch arrived while hero is facing a raise preflop — it's based on pre-raise state.
+  // Discard and request a fresh decision with the current pot/action info.
+  if (lastPersonaRec && lastState && lastState.communityCards.length === 0 && heroFacingRaiseNow && !preflopFastPathFired) {
+    executing = false;
+    if (lastState.isHeroTurn && handMessages.length > 0) {
       console.log(`[Poker] [${autopilotMode.toUpperCase()}] Pre-fetch discarded — facing raise, requesting fresh decision`);
       const turnMsg = buildTurnMessage(lastState);
-      if (turnMsg.trim()) {
-        handMessages.push({ role: "user", content: turnMsg });
-      }
+      if (turnMsg.trim()) handMessages.push({ role: "user", content: turnMsg });
       requestDecision([...handMessages]);
-    } else {
-      console.log(`[Poker] [${autopilotMode.toUpperCase()}] Discarding pre-fetch — persona chart will handle preflop`);
     }
     return;
   }
@@ -1355,13 +1352,6 @@ function processGameState() {
         const rawPosition = getPosition(state.heroSeat, state.dealerSeat, activePlayers.length);
         const position = rawPosition === "??" ? "CO" : rawPosition;
         requestPersona(state.heroCards, position);
-
-        // Pre-fetch decision for monitor mode — start the API call while others are deciding
-        // so advice is ready (or nearly ready) by the time action reaches hero.
-        // Guard: only pre-fetch when both hero cards are visible so the suit description is correct.
-        if (autopilotMode === "monitor" && state.heroCards.length === 2) {
-          requestDecision([...handMessages]);
-        }
       }
     }
   }
@@ -1489,42 +1479,53 @@ function processGameState() {
       }
     }
 
-    // Phase 4 — Post-flop local engine fast-path
-    // Monitor mode: always use local engine regardless of confidence.
-    // Play mode: only use local engine when confidence >= CONFIDENCE_THRESHOLD.
-    if (autopilotMode !== "off" && state.communityCards.length >= 3) {
-      const local = localDecide(state);
-      if (local) {
-        const meetsThreshold = local.confidence >= CONFIDENCE_THRESHOLD;
-        if (autopilotMode === "monitor" || meetsThreshold) {
-          executing = true;
-          const confidenceTag = meetsThreshold ? "" : ` (~${(local.confidence * 100).toFixed(0)}% conf)`;
-          console.log(`[Poker] [Local] ${local.action}${local.amount != null ? ` €${local.amount.toFixed(2)}` : ""} (confidence ${local.confidence.toFixed(2)}) — ${local.reasoning}${confidenceTag}`);
-          // Forward decision to web app for observability — fire-and-forget via background
-          chrome.runtime.sendMessage({
-            type: "LOCAL_DECISION",
-            payload: {
-              action: local.action,
-              amount: local.amount,
-              confidence: local.confidence,
-              reasoning: local.reasoning,
-              source: "local",
-            },
-          });
-          safeExecuteAction(
-            { action: local.action, amount: local.amount, reasoning: local.reasoning + confidenceTag },
-            "local",
-          );
-          lastHeroTurn = state.isHeroTurn;
-          lastState = state;
-          return;
-        }
-        console.log(`[Poker] [Local] Low confidence (${local.confidence.toFixed(2)}) — falling back to Claude: ${local.reasoning}`);
+    // Phase 2 — Preflop facing-raise: local 3-bet/call/fold chart
+    if (autopilotMode !== "off" && isPreflop && facingRaise && state.heroCards.length > 0) {
+      const callOpt = state.availableActions.find((a) => a.type === "CALL");
+      const frCallAmount = parseCurrency(callOpt?.amount);
+      const frPot = parseCurrency(state.pot);
+      const frActivePlayers = state.players.filter((p) => p.name && !p.folded && p.hasCards);
+      const frRawPos = getPosition(state.heroSeat, state.dealerSeat, frActivePlayers.length);
+      const frPos = frRawPos === "BTN/SB" ? "BTN" : frRawPos === "??" ? "CO" : frRawPos;
+      const frDecision = facingRaiseDecision(state.heroCards, frPos, frCallAmount, frPot);
+      if (frDecision) {
+        executing = true;
+        console.log(`[Poker] [Local/Preflop] Facing raise: ${frDecision.action} (confidence ${frDecision.confidence.toFixed(2)}) — ${frDecision.reasoning}`);
+        safeExecuteAction(
+          { action: frDecision.action, amount: frDecision.amount, reasoning: frDecision.reasoning },
+          "local",
+        );
+        lastHeroTurn = state.isHeroTurn;
+        lastState = state;
+        return;
       }
     }
 
-    if (autopilotMode !== "off" && handMessages.length > 0) {
-      requestDecision([...handMessages]);
+    // Phase 4 — Post-flop local engine fast-path (always used)
+    if (autopilotMode !== "off" && state.communityCards.length >= 3) {
+      const local = localDecide(state);
+      if (local) {
+        executing = true;
+        console.log(`[Poker] [Local] ${local.action}${local.amount != null ? ` €${local.amount.toFixed(2)}` : ""} (confidence ${local.confidence.toFixed(2)}) — ${local.reasoning}`);
+        // Forward decision to web app for observability — fire-and-forget via background
+        chrome.runtime.sendMessage({
+          type: "LOCAL_DECISION",
+          payload: {
+            action: local.action,
+            amount: local.amount,
+            confidence: local.confidence,
+            reasoning: local.reasoning,
+            source: "local",
+          },
+        });
+        safeExecuteAction(
+          { action: local.action, amount: local.amount, reasoning: local.reasoning },
+          "local",
+        );
+        lastHeroTurn = state.isHeroTurn;
+        lastState = state;
+        return;
+      }
     }
   }
 

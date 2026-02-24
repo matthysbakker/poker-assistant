@@ -7,7 +7,7 @@
  * Decision output:
  *   action  — one of FOLD / CHECK / CALL / RAISE / BET
  *   amount  — null (use bet-sizing logic in caller) or explicit € amount
- *   confidence  — 0.0–1.0; caller falls back to Claude if below threshold
+ *   confidence  — 0.0–1.0
  */
 
 import { evaluateHand, type HandTier } from "./hand-evaluator";
@@ -105,22 +105,34 @@ export function applyRuleTree(input: RuleTreeInput): LocalDecision {
   // Two-tone alone (wetScore 2) is semi-wet but not dangerous enough to dominate TPTK.
   const mismatch = detectStrengthEquityMismatch(hand.tier, board.wetScore >= 3, activePlayers, facingBet);
 
-  // ── Low-confidence situations → fall through to Claude ──────────────────
+  // ── Multiway and large-bet overrides ────────────────────────────────────
 
-  // Multiway pot post-flop: range interactions too complex
+  // Multiway pot post-flop: tighten ranges, small bets only with premium hands
   if (multiway && communityCards.length >= 3) {
-    const confidence = 0.45;
-    return { action: "FOLD", amount: null, confidence, reasoning: "Multiway pot — Claude fallback" };
+    if (hand.tier === "nut" || hand.tier === "strong") {
+      if (facingBet) {
+        return { action: "CALL", amount: null, confidence: 0.72, reasoning: `Multiway: ${hand.tier} hand, calling` };
+      }
+      return { action: "BET", amount: betSize(pot, betFraction * 0.75), confidence: 0.72, reasoning: `Multiway: ${hand.tier} hand, small bet` };
+    }
+    if (hand.tier === "top_pair_gk") {
+      if (facingBet) return { action: "FOLD", amount: null, confidence: 0.70, reasoning: "Multiway: TPTK vs bet, range disadvantage" };
+      return { action: "CHECK", amount: null, confidence: 0.72, reasoning: "Multiway: TPTK, pot control" };
+    }
+    // medium, weak, draws, air — check-fold
+    if (facingBet) return { action: "FOLD", amount: null, confidence: 0.75, reasoning: "Multiway: weak holding vs bet" };
+    return { action: "CHECK", amount: null, confidence: 0.72, reasoning: "Multiway: checking weak hand" };
   }
 
-  // Facing unusual aggression (check-raise): unknown situation
+  // Facing large bet with medium/weak/TPTK: fold is standard
   if (facingBet && callAmount > pot * 0.5 && (hand.tier === "medium" || hand.tier === "weak" || hand.tier === "top_pair_gk")) {
-    return { action: "FOLD", amount: null, confidence: 0.45, reasoning: "Facing large bet — range uncertainty, Claude fallback" };
+    return { action: "FOLD", amount: null, confidence: 0.75, reasoning: `Facing large bet (${(callAmount / pot * 100).toFixed(0)}% pot) with ${hand.tier}` };
   }
 
-  // River: uncompleted draws have 0 remaining outs — let Claude decide bluff/give-up
+  // River: draws miss — check back or fold to bet
   if (communityCards.length === 5 && (hand.tier === "draw" || hand.tier === "weak_draw" || hand.tier === "strong_draw")) {
-    return { action: "FOLD", amount: null, confidence: 0.40, reasoning: "River: draw missed — Claude fallback" };
+    if (facingBet) return { action: "FOLD", amount: null, confidence: 0.85, reasoning: "River: draw missed, folding to bet" };
+    return { action: "CHECK", amount: null, confidence: 0.80, reasoning: "River: draw missed, checking back" };
   }
 
   // ── Tier-based decision tree ─────────────────────────────────────────────
@@ -152,7 +164,7 @@ export function applyRuleTree(input: RuleTreeInput): LocalDecision {
     if (spr < 3) {
       decision = { action: facingBet ? "CALL" : "BET", amount: null, confidence: 0.85, reasoning: `TPTK/overpair, commit zone (SPR ${spr.toFixed(1)})` };
     } else if (mismatch.dominated) {
-      return { action: "FOLD", amount: null, confidence: 0.48, reasoning: `TPTK may be dominated: ${mismatch.reason} — Claude fallback` };
+      return { action: "FOLD", amount: null, confidence: 0.72, reasoning: `TPTK may be dominated: ${mismatch.reason}` };
     } else if (facingBet) {
       // OOP check-call is standard GTO
       decision = { action: "CALL", amount: null, confidence: inPosition ? 0.72 : 0.65, reasoning: `TPTK vs bet, ${inPosition ? "in position call" : "OOP call"}` };
@@ -229,9 +241,10 @@ export function applyRuleTree(input: RuleTreeInput): LocalDecision {
 
   // ── AIR ──────────────────────────────────────────────────────────────────
   else {
-    // air — river bluff or give-up decisions: always Claude
+    // air — river: check back or fold to bet
     if (communityCards.length === 5) {
-      return { action: "FOLD", amount: null, confidence: 0.40, reasoning: "Air on river — Claude fallback for bluff/give-up decision" };
+      if (facingBet) return { action: "FOLD", amount: null, confidence: 0.80, reasoning: "River: air vs bet, folding" };
+      return { action: "CHECK", amount: null, confidence: 0.75, reasoning: "River: air, checking back" };
     }
     if (facingBet) {
       decision = { action: "FOLD", amount: null, confidence: 0.72, reasoning: "Air vs bet, folding" };
