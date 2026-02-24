@@ -12,7 +12,6 @@
 import type { HandTier } from "../hand-evaluator";
 
 interface DirtyOutsInput {
-  totalRawOuts: number;
   flushOuts: number;
   straightOuts: number;
   boardPaired: boolean;
@@ -29,7 +28,7 @@ interface DirtyOutsInput {
  * - If opponent is estimated at strong+ tier: additional -10%
  */
 export function applyDirtyOutsDiscount(input: DirtyOutsInput): number {
-  let { totalRawOuts, flushOuts, straightOuts } = input;
+  let { flushOuts, straightOuts } = input;
 
   // Paired board discounts flush outs (board pair can make a full house, beating flush)
   if (input.boardPaired && flushOuts === 9) {

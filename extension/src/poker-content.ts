@@ -19,7 +19,7 @@ import { applyRuleTree } from "../../lib/poker/rule-tree";
 import { clearEvalCache } from "../../lib/poker/hand-evaluator";
 import { clearBoardCache } from "../../lib/poker/board-analyzer";
 import { parseCurrency } from "../../lib/poker/equity/pot-odds";
-import type { LocalDecision } from "../../lib/poker/rule-tree";
+import type { LocalDecision } from "../../lib/poker/types";
 import type { PlayerExploitType } from "../../lib/poker/exploit";
 
 console.log("[Poker] Content script loaded on", window.location.href);

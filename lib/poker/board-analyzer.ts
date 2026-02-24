@@ -8,6 +8,8 @@
  * Results are cached by input key for repeated calls within the same tick.
  */
 
+import { parseCard } from "./equity/card";
+
 export interface BoardTexture {
   /** 0=rainbow 1=two-tone 2=monotone */
   suitedness: 0 | 1 | 2;
@@ -78,21 +80,15 @@ export function analyzeBoard(communityCards: string[]): BoardTexture {
 }
 
 function _analyze(communityCards: string[]): BoardTexture {
-  // Parse ranks and suits
+  // Parse ranks and suits using the shared card parser
   const ranks: number[] = [];
   const suits: number[] = [];
 
   for (const card of communityCards) {
-    const s = card.trim();
-    if (s.length < 2) continue;
-    const suitChar = s[s.length - 1].toLowerCase();
-    const rankStr = s.slice(0, -1).toUpperCase();
-
-    const suitIdx = { h: 0, d: 1, c: 2, s: 3 }[suitChar] ?? -1;
-    const rank = _parseRank(rankStr);
-    if (rank > 0 && suitIdx >= 0) {
-      ranks.push(rank);
-      suits.push(suitIdx);
+    const parsed = parseCard(card);
+    if (parsed) {
+      ranks.push(parsed.rank);
+      suits.push(parsed.suit);
     }
   }
 
@@ -149,14 +145,6 @@ function _computeWetScore(
   // Dry: connected rainbow or paired two-tone
   if (connected || paired) return 1;
   return 0;
-}
-
-function _parseRank(s: string): number {
-  const map: Record<string, number> = {
-    "2": 2, "3": 3, "4": 4, "5": 5, "6": 6, "7": 7, "8": 8,
-    "9": 9, "10": 10, "T": 10, "J": 11, "Q": 12, "K": 13, "A": 14,
-  };
-  return map[s] ?? 0;
 }
 
 /** Clear board analysis cache (call at start of each new hand). */

@@ -13,6 +13,7 @@
 import { evaluateHand, type HandTier } from "./hand-evaluator";
 import { analyzeBoard, betFractionFromWetScore } from "./board-analyzer";
 import { applyExploitAdjustments, type PlayerExploitType } from "./exploit";
+import type { LocalDecision } from "./types";
 import {
   parseCards,
   analyzeOuts,
@@ -22,16 +23,6 @@ import {
   applyDirtyOutsDiscount,
   detectStrengthEquityMismatch,
 } from "./equity";
-
-export interface LocalDecision {
-  action: "FOLD" | "CHECK" | "CALL" | "RAISE" | "BET";
-  /** Recommended bet/raise amount in €, or null = use default sizing */
-  amount: number | null;
-  /** 0.0–1.0; below threshold → fall through to Claude */
-  confidence: number;
-  /** Human-readable explanation for console logging */
-  reasoning: string;
-}
 
 export interface RuleTreeInput {
   heroCards: string[];         // ["Ah", "Kd"]
@@ -63,16 +54,6 @@ function isInPosition(position: string): boolean {
 
 function betSize(pot: number, fraction: number): number {
   return Math.round(pot * fraction * 100) / 100;
-}
-
-// ── Board high-card detection (for AP-2 scare-card bluff) ─────────────────────
-
-/** Returns true if the board has an A, K, or Q — high-card texture that nits fear. */
-function boardHasHighCard(communityCards: string[]): boolean {
-  return communityCards.some((c) => {
-    const rank = c.slice(0, -1).toUpperCase();
-    return rank === "A" || rank === "K" || rank === "Q";
-  });
 }
 
 // ── Main Rule Tree ─────────────────────────────────────────────────────────────
@@ -107,7 +88,6 @@ export function applyRuleTree(input: RuleTreeInput): LocalDecision {
   const seenCount = allCards.length;
 
   const adjustedOuts = applyDirtyOutsDiscount({
-    totalRawOuts: outs.totalRawOuts,
     flushOuts: outs.flushOuts,
     straightOuts: outs.oesd + outs.gutshot,
     boardPaired: board.paired,
@@ -261,7 +241,7 @@ export function applyRuleTree(input: RuleTreeInput): LocalDecision {
   }
 
   // ── Opponent exploit post-processing ──────────────────────────────────────
-  const highCardOrWetBoard = boardHasHighCard(communityCards) || board.wetScore >= 2;
+  const highCardOrWetBoard = board.highCards || board.wetScore >= 2;
   return applyExploitAdjustments(
     decision,
     opponentType,
