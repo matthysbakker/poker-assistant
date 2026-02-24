@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { selectPersona } from "@/lib/poker/persona-selector";
+import { getPersonaRecommendations } from "@/lib/poker/persona-lookup";
 import type { TableTemperature } from "@/lib/poker/table-temperature";
 import type { ChartPosition } from "@/lib/poker/personas";
 
@@ -45,9 +46,17 @@ export async function POST(req: Request) {
     return Response.json({ error: "Could not select persona for given cards/position." }, { status: 422 });
   }
 
+  const allRecs = getPersonaRecommendations(heroCards, normalisedPosition as ChartPosition) ?? [];
+
   return Response.json({
     personaName: selection.persona.name,
     action: selection.action,
     temperature: temp,
+    rotated: selection.rotated,
+    allPersonas: allRecs.map(r => ({
+      name: r.persona.name,
+      action: r.action,
+      selected: r.persona.id === selection.persona.id,
+    })),
   });
 }

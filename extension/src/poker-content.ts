@@ -76,6 +76,8 @@ interface PersonaRec {
   name: string;
   action: string;
   temperature: string;
+  rotated: boolean;
+  allPersonas: Array<{ name: string; action: string; selected: boolean }>;
 }
 
 interface ClaudeAdvice {
@@ -699,6 +701,8 @@ async function requestPersona(heroCards: string[], position: string) {
         name: data.personaName,
         action: data.action,
         temperature: data.temperature ?? "unknown",
+        rotated: data.rotated ?? false,
+        allPersonas: data.allPersonas ?? [],
       };
       console.log("[Poker] Persona:", lastPersonaRec.name, "→", lastPersonaRec.action);
       if (lastState) updateOverlay(lastState);
@@ -1094,17 +1098,39 @@ function updateOverlay(state: GameState) {
   const turn = state.isHeroTurn ? "YES" : "no";
   const turnColor = state.isHeroTurn ? "#4ade80" : "#71717a";
 
-  // Persona line — shown preflop only (no community cards yet)
+  // Persona section — all 4 personas shown preflop, active persona shown post-flop
   const isPreflop = state.communityCards.length === 0 && state.heroCards.length > 0;
-  const personaHtml = isPreflop && lastPersonaRec
-    ? `<div style="border-top:1px solid #3f3f46;margin-top:6px;padding-top:6px">
-         <span style="color:#818cf8;font-weight:bold">${escapeHtml(lastPersonaRec.name)}</span>
-         <span style="color:#e4e4e7"> → ${escapeHtml(lastPersonaRec.action)}</span>
-         ${lastPersonaRec.temperature !== "unknown" ? `<span style="color:#52525b"> [${escapeHtml(lastPersonaRec.temperature.replaceAll("_", "-"))}]</span>` : ""}
-       </div>`
-    : isPreflop
-      ? `<div style="border-top:1px solid #3f3f46;margin-top:6px;padding-top:6px;color:#52525b">Persona: —</div>`
-      : "";
+
+  // Concrete raise amount: use the actual raise button value if available, else 3x BB default
+  const raiseOpt = state.availableActions.find(a => a.type === "RAISE" || a.type === "BET");
+  const preflopRaiseAmt = raiseOpt?.amount ?? "€0.06";
+
+  let personaHtml = "";
+  if (lastPersonaRec?.allPersonas.length) {
+    if (isPreflop) {
+      // Show why this persona was selected
+      const selectionTag = lastPersonaRec.rotated
+        ? "rotating"
+        : lastPersonaRec.temperature !== "unknown"
+          ? lastPersonaRec.temperature.replaceAll("_", "-")
+          : "best";
+      const rows = lastPersonaRec.allPersonas.map(p => {
+        const isSelected = p.selected;
+        const actionStr = p.action === "RAISE" ? `RAISE ${preflopRaiseAmt}` : p.action;
+        const actionColor = p.action === "RAISE" ? "#4ade80" : p.action === "CALL" ? "#fbbf24" : "#52525b";
+        const prefix = isSelected ? `<span style="color:#818cf8">★</span>` : `<span style="color:#3f3f46">·</span>`;
+        const nameStyle = isSelected ? "color:#e4e4e7;font-weight:bold" : "color:#52525b";
+        const tag = isSelected ? ` <span style="color:#3f3f46;font-size:10px">[${escapeHtml(selectionTag)}]</span>` : "";
+        return `<div>${prefix} <span style="${nameStyle}">${escapeHtml(p.name)}</span> → <span style="color:${actionColor};font-weight:${isSelected ? "bold" : "normal"}">${escapeHtml(actionStr)}</span>${tag}</div>`;
+      }).join("");
+      personaHtml = `<div style="border-top:1px solid #3f3f46;margin-top:6px;padding-top:6px">${rows}</div>`;
+    } else {
+      // Post-flop: just show which persona is active
+      personaHtml = `<div style="border-top:1px solid #3f3f46;margin-top:6px;padding-top:6px;color:#52525b">Playing as: <span style="color:#818cf8;font-weight:bold">${escapeHtml(lastPersonaRec.name)}</span></div>`;
+    }
+  } else if (isPreflop && state.heroCards.length > 0) {
+    personaHtml = `<div style="border-top:1px solid #3f3f46;margin-top:6px;padding-top:6px;color:#52525b">Personas loading…</div>`;
+  }
 
   // Claude advice line — web-app advice takes precedence; fall back to monitor API advice
   const webAdviceRec = lastClaudeAdvice?.action
