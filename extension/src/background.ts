@@ -285,6 +285,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.type === "AUTOPILOT_DECIDE") {
+    if (sender.tab?.id !== pokerTabId) {
+      console.warn("[BG] AUTOPILOT_DECIDE from unregistered tab, ignoring");
+      return;
+    }
     console.log("[BG] Autopilot decision requested");
     fetchAutopilotDecision(message.messages);
     return;

@@ -20,6 +20,7 @@ import { clearEvalCache } from "../../lib/poker/hand-evaluator";
 import { clearBoardCache } from "../../lib/poker/board-analyzer";
 import { parseCurrency } from "../../lib/poker/equity/pot-odds";
 import type { LocalDecision } from "../../lib/poker/rule-tree";
+import type { PlayerExploitType } from "../../lib/poker/exploit";
 
 console.log("[Poker] Content script loaded on", window.location.href);
 
@@ -108,6 +109,7 @@ let lastState: GameState | null = null;
 let lastHeroTurn = false;
 let streetActions: string[] = []; // accumulates opponent actions between hero turns (todo 044)
 let decisionWatchdog: ReturnType<typeof setTimeout> | null = null; // timeout guard (todo 031)
+let watchdogToken: { cancelled: boolean } | null = null;           // cancellation token (todo 059)
 
 // ── Registration ───────────────────────────────────────────────────────
 
@@ -509,12 +511,12 @@ function deriveTemperatureFromDomStats(
   return isAggressive === false ? "loose_passive" : "loose_aggressive";
 }
 
-/** Maps table temperature dominantType → exploit engine opponent type string. */
+/** Maps table temperature dominantType → exploit engine opponent type. */
 function opponentTypeFromTemperature(
   temp: { dominantType: TableTemperatureLocal; handsObserved: number } | null,
-): string | undefined {
+): PlayerExploitType | undefined {
   if (!temp) return undefined;
-  const map: Partial<Record<TableTemperatureLocal, string>> = {
+  const map: Partial<Record<TableTemperatureLocal, PlayerExploitType>> = {
     loose_passive:    "LOOSE_PASSIVE",
     tight_passive:    "TIGHT_PASSIVE",
     loose_aggressive: "LOOSE_AGGRESSIVE",
@@ -786,10 +788,14 @@ function requestDecision(
     : messages;
 
   // Watchdog: auto-fold if AUTOPILOT_ACTION never arrives (todo 031 — plan specified 12s timeout)
+  // Cancellation token (todo 059): prevents double-action if decision arrives just as timer fires.
   const timer = scrapeTimer();
   const timeoutMs = Math.max(3000, (timer ?? 12) * 1000 - 3000);
+  const token = { cancelled: false };
+  watchdogToken = token;
   decisionWatchdog = setTimeout(() => {
     decisionWatchdog = null;
+    if (token.cancelled) return;
     console.warn("[Poker] Decision timeout");
     executing = false;
     if (autopilotMode === "play") {
@@ -882,64 +888,67 @@ async function executeAction(decision: AutopilotAction) {
 
   let button: Element | null;
 
-  // RAISE/BET: bet-input not yet implemented — fall back to CALL/CHECK to avoid
-  // executing at the wrong default size (todo 030)
-  if (decision.action === "RAISE" || decision.action === "BET") {
-    console.warn(
-      `[Poker] ${decision.action} €${decision.amount ?? "?"} requested but bet-input entry not yet implemented — falling back to avoid wrong-sized bet`,
-    );
-    button = findActionButton("CALL") ?? findActionButton("CHECK") ?? findActionButton("FOLD");
-    if (button) {
-      console.log("[Poker] RAISE/BET fallback: clicked", button.textContent?.trim());
-    }
-  } else {
-    button = findActionButton(decision.action);
+  // try/finally guarantees executing is always cleared, even if an unexpected
+  // exception is thrown (todo 060)
+  try {
+    // RAISE/BET: bet-input not yet implemented — fall back to CALL/CHECK to avoid
+    // executing at the wrong default size (todo 030)
+    if (decision.action === "RAISE" || decision.action === "BET") {
+      console.warn(
+        `[Poker] ${decision.action} €${decision.amount ?? "?"} requested but bet-input entry not yet implemented — falling back to avoid wrong-sized bet`,
+      );
+      button = findActionButton("CALL") ?? findActionButton("CHECK") ?? findActionButton("FOLD");
+      if (button) {
+        console.log("[Poker] RAISE/BET fallback: clicked", button.textContent?.trim());
+      }
+    } else {
+      button = findActionButton(decision.action);
 
-    // Standard fallback chain for FOLD/CHECK/CALL
-    if (!button && FALLBACK_MAP[decision.action]) {
-      for (const fallback of FALLBACK_MAP[decision.action]) {
-        button = findActionButton(fallback);
-        if (button) {
-          console.log(`[Poker] ${decision.action} unavailable, fell back to ${fallback}`);
-          break;
+      // Standard fallback chain for FOLD/CHECK/CALL
+      if (!button && FALLBACK_MAP[decision.action]) {
+        for (const fallback of FALLBACK_MAP[decision.action]) {
+          button = findActionButton(fallback);
+          if (button) {
+            console.log(`[Poker] ${decision.action} unavailable, fell back to ${fallback}`);
+            break;
+          }
         }
       }
     }
-  }
 
-  if (!button) {
-    console.error("[Poker] No action button found — giving up");
-    executing = false;
-    return;
-  }
-
-  // Dynamic humanization delay based on remaining timer
-  if (timer !== null && timer <= 3) {
-    console.log("[Poker] Timer critical, clicking immediately");
-  } else {
-    const maxDelay =
-      timer !== null ? Math.min(8000, (timer - 3) * 1000) : 8000;
-    const minDelay = Math.min(1500, maxDelay);
-    if (maxDelay > minDelay) {
-      await humanDelay(minDelay, maxDelay);
-    }
-  }
-
-  // Re-check element is still connected after async delay (todo 036)
-  if (!button.isConnected) {
-    console.warn("[Poker] Button detached during delay — refinding");
-    button = findActionButton(decision.action === "RAISE" || decision.action === "BET"
-      ? "CALL"
-      : decision.action);
     if (!button) {
-      console.error("[Poker] Button lost after delay, aborting");
-      executing = false;
+      console.error("[Poker] No action button found — giving up");
       return;
     }
-  }
 
-  simulateClick(button);
-  executing = false;
+    // Dynamic humanization delay based on remaining timer
+    if (timer !== null && timer <= 3) {
+      console.log("[Poker] Timer critical, clicking immediately");
+    } else {
+      const maxDelay =
+        timer !== null ? Math.min(8000, (timer - 3) * 1000) : 8000;
+      const minDelay = Math.min(1500, maxDelay);
+      if (maxDelay > minDelay) {
+        await humanDelay(minDelay, maxDelay);
+      }
+    }
+
+    // Re-check element is still connected after async delay (todo 036)
+    if (!button.isConnected) {
+      console.warn("[Poker] Button detached during delay — refinding");
+      button = findActionButton(decision.action === "RAISE" || decision.action === "BET"
+        ? "CALL"
+        : decision.action);
+      if (!button) {
+        console.error("[Poker] Button lost after delay, aborting");
+        return;
+      }
+    }
+
+    simulateClick(button);
+  } finally {
+    executing = false;
+  }
 }
 
 /**
@@ -979,7 +988,12 @@ function safeExecuteAction(action: AutopilotAction, source: "claude" | "local" =
 }
 
 function onDecisionReceived(action: AutopilotAction) {
-  // Cancel timeout watchdog (todo 031)
+  // Cancel timeout watchdog — token must be cancelled before clearTimeout in case
+  // the timer already fired and its callback is queued (todo 031, todo 059)
+  if (watchdogToken) {
+    watchdogToken.cancelled = true;
+    watchdogToken = null;
+  }
   if (decisionWatchdog) {
     clearTimeout(decisionWatchdog);
     decisionWatchdog = null;

@@ -12,7 +12,7 @@
 
 import { evaluateHand, type HandTier } from "./hand-evaluator";
 import { analyzeBoard, betFractionFromWetScore } from "./board-analyzer";
-import { applyExploitAdjustments } from "./exploit";
+import { applyExploitAdjustments, type PlayerExploitType } from "./exploit";
 import {
   parseCards,
   analyzeOuts,
@@ -43,7 +43,7 @@ export interface RuleTreeInput {
   facingBet: boolean;          // is there a bet/raise to act on?
   position: string;            // "BTN"|"SB"|"BB"|"UTG"|"MP"|"CO"|"??"
   activePlayers: number;       // number of players still in hand (2 = heads-up)
-  opponentType?: string;       // inferred type from session (e.g. "LOOSE_PASSIVE")
+  opponentType?: PlayerExploitType; // inferred type from session
   handsObserved?: number;      // sample size for opponent model — scales exploit confidence
 }
 
