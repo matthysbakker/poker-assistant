@@ -732,12 +732,9 @@ function localDecide(state: GameState): LocalDecision | null {
   // Post-flop only: need ≥ 3 community cards (guard against partial deal animation)
   if (state.communityCards.length < 3 || state.heroCards.length === 0) return null;
 
-  // Temperature is set by requestPersona() which is async — it may not have resolved yet.
-  // Return null (Claude fallback) rather than silently running exploit with unknown opponent.
-  if (!lastTableTemperature) {
-    console.info("[Poker] No table temperature yet — deferring to Claude");
-    return null;
-  }
+  // Temperature is set by requestPersona() which fires at hand start.
+  // If it hasn't arrived yet (async race on first hand), fall back to base rules (no exploit layer).
+  const temperature = lastTableTemperature ?? { dominantType: "unknown" as TableTemperatureLocal, handsObserved: 0 };
 
   const heroPlayer = state.players.find((p) => p.seat === state.heroSeat);
   if (!heroPlayer) return null;
@@ -763,8 +760,8 @@ function localDecide(state: GameState): LocalDecision | null {
 
   // Infer opponent type from table temperature (aggregate VPIP/AF from DOM).
   // Per-seat wiring deferred until CLAUDE_ADVICE → opponentTypes bridge is in place.
-  const opponentType = TEMPERATURE_TO_OPPONENT_TYPE[lastTableTemperature.dominantType];
-  const handsObserved = lastTableTemperature.handsObserved;
+  const opponentType = TEMPERATURE_TO_OPPONENT_TYPE[temperature.dominantType];
+  const handsObserved = temperature.handsObserved;
 
   try {
     return applyRuleTree({
@@ -1148,8 +1145,20 @@ function updateOverlay(state: GameState) {
       }).join("");
       personaHtml = `<div style="border-top:1px solid #3f3f46;margin-top:6px;padding-top:6px">${rows}</div>`;
     } else {
-      // Post-flop: just show which persona is active
-      personaHtml = `<div style="border-top:1px solid #3f3f46;margin-top:6px;padding-top:6px;color:#52525b">Playing as: <span style="color:#818cf8;font-weight:bold">${escapeHtml(lastPersonaRec.name)}</span></div>`;
+      // Post-flop: show active persona + the current local-engine recommendation inline
+      const isMonitorErrPost = !!monitorAdvice && monitorAdvice.reasoning.startsWith("Auto-fold:");
+      const postAction = monitorAdvice && !isMonitorErrPost
+        ? monitorAdvice.action + (monitorAdvice.amount != null ? ` €${monitorAdvice.amount.toFixed(2)}` : "")
+        : null;
+      const postActionColor = !postAction ? "#52525b"
+        : (postAction.startsWith("RAISE") || postAction.startsWith("BET")) ? "#4ade80"
+        : postAction.startsWith("CALL") ? "#fbbf24"
+        : postAction.startsWith("FOLD") ? "#ef4444"
+        : "#9ca3af";
+      const postReasoningSnip = monitorAdvice && !isMonitorErrPost && monitorAdvice.reasoning
+        ? ` <span style="color:#52525b;font-size:10px">${escapeHtml(monitorAdvice.reasoning.slice(0, 60))}${monitorAdvice.reasoning.length > 60 ? "…" : ""}</span>`
+        : "";
+      personaHtml = `<div style="border-top:1px solid #3f3f46;margin-top:6px;padding-top:6px;color:#52525b">Playing as: <span style="color:#818cf8;font-weight:bold">${escapeHtml(lastPersonaRec.name)}</span>${postAction ? ` → <span style="color:${postActionColor};font-weight:bold">${escapeHtml(postAction)}</span>${postReasoningSnip}` : " <span style='color:#52525b'>(waiting…)</span>"}</div>`;
     }
   } else if (isPreflop && state.heroCards.length > 0) {
     personaHtml = `<div style="border-top:1px solid #3f3f46;margin-top:6px;padding-top:6px;color:#52525b">Personas loading…</div>`;
