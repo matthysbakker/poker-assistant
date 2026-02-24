@@ -4,6 +4,8 @@ import { join } from "path";
 import { analyzeHand } from "@/lib/ai/analyze-hand";
 import { detectCards } from "@/lib/card-detection";
 import type { DetectionResult } from "@/lib/card-detection/types";
+import { positionSchema } from "@/lib/card-detection/types";
+import { tableTemperatureSchema } from "@/lib/poker/table-temperature";
 import {
   buildDetectionDetails,
   writeHandRecord,
@@ -17,38 +19,28 @@ const opponentHistorySchema = z.record(
   z.object({
     username: z.string().optional(),
     handsObserved: z.number(),
-    actions: z.array(z.string()),
+    actions: z.array(z.string().max(200)).max(20),
     inferredType: z.string(),
+    notes: z.string().max(500).optional(),
   }),
 );
-
-const tableTemperatureSchema = z.enum([
-  "tight_passive",
-  "tight_aggressive",
-  "loose_passive",
-  "loose_aggressive",
-  "balanced",
-  "unknown",
-]);
-
-const positionSchema = z.enum(["UTG", "MP", "CO", "BTN", "SB", "BB"]);
 
 const requestSchema = z.object({
   image: z.string().min(1).max(10_000_000),
   opponentHistory: opponentHistorySchema.optional(),
-  handContext: z.string().optional(),
+  handContext: z.string().max(5000).optional(),
   captureMode: z.enum(["manual", "continuous"]).optional(),
   // Capture context for hand record enrichment
-  sessionId: z.string().optional(),
-  pokerHandId: z.string().nullable().optional(),
+  sessionId: z.string().uuid().optional(),
+  pokerHandId: z.string().uuid().nullable().optional(),
   tableTemperature: tableTemperatureSchema.nullable().optional(),
   tableReads: z.number().nullable().optional(),
-  heroPositionCode: positionSchema.nullable().optional(),
+  heroPosition: positionSchema.nullable().optional(),
   personaSelected: z
     .object({
-      personaId: z.string(),
-      personaName: z.string(),
-      action: z.string(),
+      personaId: z.string().max(64),
+      personaName: z.string().max(64),
+      action: z.string().max(64),
       temperature: tableTemperatureSchema.nullable(),
     })
     .nullable()
@@ -72,11 +64,15 @@ export async function POST(req: Request) {
     );
   }
 
-  // Save capture to disk (development only, disabled in continuous mode)
-  if (process.env.SAVE_CAPTURES !== "false") {
+  // Save capture to disk (opt-in via SAVE_CAPTURES=true)
+  if (process.env.SAVE_CAPTURES === "true") {
     const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
     const filePath = join(process.cwd(), "test/captures", `${timestamp}.png`);
-    writeFile(filePath, Buffer.from(parsed.data.image, "base64")).catch(() => {});
+    writeFile(filePath, Buffer.from(parsed.data.image, "base64")).catch(
+      (err: unknown) => {
+        console.error("[captures] Failed to write capture file:", err);
+      },
+    );
   }
 
   // Run deterministic card detection before Claude
@@ -128,7 +124,7 @@ export async function POST(req: Request) {
             : "standard",
           tableTemperature: parsed.data.tableTemperature ?? null,
           tableReads: parsed.data.tableReads ?? null,
-          heroPositionCode: parsed.data.heroPositionCode ?? null,
+          heroPosition: parsed.data.heroPosition ?? null,
           personaSelected: parsed.data.personaSelected ?? null,
           analysis,
         };

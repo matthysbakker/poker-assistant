@@ -32,10 +32,10 @@ function loadAllRecords(): HandRecord[] {
 
     for (const file of files) {
       try {
-        const raw = readFileSync(join(dirPath, file), "utf-8");
-        records.push(JSON.parse(raw) as HandRecord);
+        const record = JSON.parse(readFileSync(join(dirPath, file), "utf-8")) as HandRecord;
+        records.push(record);
       } catch (err) {
-        console.warn(`[skip] Failed to parse ${dateDir}/${file}:`, err);
+        console.warn(`Skipping malformed record ${file}: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
   }
@@ -72,11 +72,13 @@ function groupByHand(records: HandRecord[]): void {
     if (!sessions.has(sessionKey)) {
       sessions.set(sessionKey, new Map());
     }
-    const hands = sessions.get(sessionKey)!;
+    const hands = sessions.get(sessionKey);
+    if (!hands) continue;
     if (!hands.has(handKey)) {
       hands.set(handKey, []);
     }
-    hands.get(handKey)!.push(record);
+    const streetList = hands.get(handKey);
+    if (streetList) streetList.push(record);
   }
 
   const STREET_ORDER: Record<string, number> = {
@@ -99,7 +101,7 @@ function groupByHand(records: HandRecord[]): void {
 
     for (const [handId, streetRecords] of hands) {
       const shortHand = handId.slice(0, 8);
-      const sorted = streetRecords.sort(
+      const sorted = [...streetRecords].sort(
         (a, b) => (STREET_ORDER[a.analysis.street ?? ""] ?? 0) - (STREET_ORDER[b.analysis.street ?? ""] ?? 0),
       );
 
@@ -107,7 +109,7 @@ function groupByHand(records: HandRecord[]): void {
 
       for (const r of sorted) {
         const street = (r.analysis.street ?? "?").padEnd(7);
-        const pos = (r.heroPositionCode ?? r.analysis.heroPosition ?? "?").padEnd(3);
+        const pos = (r.heroPosition ?? r.analysis.heroPosition ?? "?").padEnd(3);
         const temp = (r.tableTemperature ?? "?").padEnd(16);
         const action = r.analysis.action ?? "?";
         const amount = r.analysis.amount ? ` ${r.analysis.amount}` : "";

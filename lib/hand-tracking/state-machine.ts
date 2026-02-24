@@ -139,7 +139,10 @@ function handleDetection(
         communityCards: community,
       };
       const triggerAnalysis = heroTurn && !state.analyzing;
-      // Generate a new pokerHandId when the first street of a hand starts
+      // Generate a new pokerHandId when the first street of a hand starts (continuous mode).
+      // Manual mode generates its own UUID in page.tsx at capture time.
+      // Both use the same format; the semantics differ: this one is post-hysteresis (confirmed hand),
+      // manual mode is per-capture-event.
       const pokerHandId =
         detectedStreet === "PREFLOP" && state.street === "WAITING"
           ? crypto.randomUUID()

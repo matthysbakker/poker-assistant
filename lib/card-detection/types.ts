@@ -1,3 +1,5 @@
+import { z } from "zod";
+
 export type Suit = "c" | "d" | "h" | "s";
 export type Rank =
   | "2"
@@ -46,7 +48,9 @@ export interface LocatedCard {
   corner: { x: number; y: number; width: number; height: number };
 }
 
-export type Position = "UTG" | "MP" | "CO" | "BTN" | "SB" | "BB";
+export const positionSchema = z.enum(["UTG", "MP", "CO", "BTN", "SB", "BB"]);
+
+export type Position = z.infer<typeof positionSchema>;
 
 export interface DetectionResult {
   heroCards: CardMatch[];

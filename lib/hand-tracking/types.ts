@@ -1,6 +1,7 @@
 import type { CardCode, Position } from "@/lib/card-detection/types";
 import type { DetectionResult } from "@/lib/card-detection/types";
 import type { HandAnalysis } from "@/lib/ai/schema";
+import type { TableTemperature } from "@/lib/poker/table-temperature";
 
 export type Street = "WAITING" | "PREFLOP" | "FLOP" | "TURN" | "RIVER";
 
@@ -42,3 +43,18 @@ export type HandAction =
   | { type: "ANALYSIS_STARTED" }
   | { type: "ANALYSIS_COMPLETE"; analysis?: HandAnalysis }
   | { type: "RESET" };
+
+export interface CaptureContext {
+  sessionId: string;
+  pokerHandId: string | null;
+  tableTemperature: TableTemperature | null;
+  tableReads: number | null;
+  /** Hero's table position at the moment the capture was triggered. */
+  heroPosition: Position | null;
+  personaSelected: {
+    personaId: string;
+    personaName: string;
+    action: string;
+    temperature: TableTemperature | null;
+  } | null;
+}

@@ -43,7 +43,7 @@ export interface HandRecord {
   tableTemperature: TableTemperature | null;
   /** Number of opponents with a classified player type that informed the temperature. */
   tableReads: number | null;
-  heroPositionCode: Position | null;
+  heroPosition: Position | null;
   personaSelected: {
     personaId: string;
     personaName: string;
