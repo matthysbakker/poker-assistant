@@ -93,6 +93,7 @@ let lastPersonaRec: PersonaRec | null = null;
 let lastTableTemperature: { dominantType: TableTemperatureLocal; handsObserved: number } | null = null;
 let personaRequesting = false; // mutex — prevents concurrent requestPersona() calls
 let cachedDealerSeat: number | null = null; // dealer seat changes once per hand, cache to avoid per-tick queries
+let preflopFastPathFired = false; // true once persona chart fires preflop — prevents stale Claude pre-fetch overwriting it
 
 // ── Local Engine Config ─────────────────────────────────────────────────
 
@@ -608,11 +609,12 @@ function buildHandStartMessage(state: GameState): string {
 
   if (state.heroCards.length > 0) {
     const [c1, c2] = state.heroCards;
+    const SUIT_NAMES: Record<string, string> = { d: "diamonds", h: "hearts", s: "spades", c: "clubs" };
     const suitTag =
       state.heroCards.length === 2 && c1 && c2
         ? c1.slice(-1) === c2.slice(-1)
-          ? " (suited)"
-          : " (offsuit)"
+          ? ` — SUITED (both ${SUIT_NAMES[c1.slice(-1)] ?? c1.slice(-1)})`
+          : ` — OFFSUIT (${SUIT_NAMES[c1.slice(-1)] ?? c1.slice(-1)} and ${SUIT_NAMES[c2.slice(-1)] ?? c2.slice(-1)})`
         : "";
     lines.push(`\nHero holds: ${state.heroCards.join(" ")}${suitTag}`);
   }
@@ -1057,6 +1059,14 @@ function onDecisionReceived(action: AutopilotAction) {
 
   console.log(`[Poker] Claude decided: ${actionStr} — ${action.reasoning}`);
 
+  // If the preflop persona chart fast-path already fired, the Claude pre-fetch is stale.
+  // Discard it in monitor mode so it doesn't overwrite the correct persona advice.
+  if (autopilotMode === "monitor" && preflopFastPathFired) {
+    console.log("[Poker] [MONITOR] Discarding stale pre-fetch — preflop fast-path already acted");
+    executing = false;
+    return;
+  }
+
   safeExecuteAction(action, "claude");
 }
 
@@ -1286,6 +1296,7 @@ function processGameState() {
     cachedDealerSeat = null;       // dealer button may move between hands
     lastClaudeAdvice = null;
     monitorAdvice = null;
+    preflopFastPathFired = false;
     clearEvalCache();
     clearBoardCache();
 
@@ -1303,8 +1314,9 @@ function processGameState() {
         requestPersona(state.heroCards, position);
 
         // Pre-fetch decision for monitor mode — start the API call while others are deciding
-        // so advice is ready (or nearly ready) by the time action reaches hero
-        if (autopilotMode === "monitor") {
+        // so advice is ready (or nearly ready) by the time action reaches hero.
+        // Guard: only pre-fetch when both hero cards are visible so the suit description is correct.
+        if (autopilotMode === "monitor" && state.heroCards.length === 2) {
           requestDecision([...handMessages]);
         }
       }
@@ -1363,6 +1375,7 @@ function processGameState() {
       const personaAction = lastPersonaRec.action.toUpperCase() as AutopilotAction["action"];
       if (["FOLD", "CALL", "RAISE", "BET", "CHECK"].includes(personaAction)) {
         executing = true;
+        preflopFastPathFired = true; // prevent stale pre-fetch from overwriting this advice
         // Phase 1: attach euro amount to preflop RAISE from DOM button.
         // No fallback — if the button has no parseable amount we send null (display "RAISE").
         const raiseBtn = state.availableActions.find((a) => a.type === "RAISE" || a.type === "BET");
