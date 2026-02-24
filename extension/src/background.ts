@@ -151,7 +151,7 @@ async function fetchAutopilotDecision(
     if (
       !action ||
       !validActions.includes(action.action) ||
-      (action.amount !== null && typeof action.amount !== "number") ||
+      (action.amount !== null && !Number.isFinite(action.amount)) ||
       typeof action.reasoning !== "string"
     ) {
       console.error("[BG] Invalid action shape from API:", action);

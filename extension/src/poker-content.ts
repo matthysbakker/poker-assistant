@@ -89,6 +89,8 @@ interface ClaudeAdvice {
 let autopilotMode: "off" | "monitor" | "play" = "off";
 let lastPersonaRec: PersonaRec | null = null;
 let lastTableTemperature: { dominantType: TableTemperatureLocal; handsObserved: number } | null = null;
+let personaRequesting = false; // mutex — prevents concurrent requestPersona() calls
+let cachedDealerSeat: number | null = null; // dealer seat changes once per hand, cache to avoid per-tick queries
 
 // ── Local Engine Config ─────────────────────────────────────────────────
 
@@ -138,7 +140,7 @@ function isAutopilotAction(x: unknown): x is AutopilotAction {
   const a = x as Record<string, unknown>;
   return (
     ["FOLD", "CHECK", "CALL", "RAISE", "BET"].includes(a.action as string) &&
-    (a.amount === null || typeof a.amount === "number") &&
+    (a.amount === null || Number.isFinite(a.amount)) &&
     typeof a.reasoning === "string"
   );
 }
@@ -309,11 +311,17 @@ function scrapeHeroSeat(): number {
 }
 
 function scrapeDealerSeat(): number {
+  // Dealer position is stable for an entire hand (~30-90s). Return cached value to avoid
+  // 6 document.querySelector calls on every detection tick.
+  if (cachedDealerSeat !== null) return cachedDealerSeat;
   for (let i = 1; i <= 6; i++) {
     const pos = document.querySelector(
       `.game-position-${i}:not(.pt-visibility-hidden)`,
     );
-    if (pos) return i;
+    if (pos) {
+      cachedDealerSeat = i;
+      return i;
+    }
   }
   return -1;
 }
@@ -405,7 +413,9 @@ function scrapeAvailableActions(): ActionOption[] {
  *   B) <div>VPIP 28</div>  (label and value in same text node)
  */
 function findStatValue(area: Element, label: string): number | null {
-  const all = Array.from(area.querySelectorAll("*"));
+  // Use targeted selectors instead of querySelectorAll("*") which traverses the entire
+  // subtree. HUD stats are shallow — label+value elements are spans or direct children.
+  const all = Array.from(area.querySelectorAll("span, div, td, p"));
   for (const el of all) {
     const ownText = Array.from(el.childNodes)
       .filter((n) => n.nodeType === Node.TEXT_NODE)
@@ -658,6 +668,8 @@ const PERSONA_API_URL = "http://localhost:3006/api/persona";
 
 async function requestPersona(heroCards: string[], position: string) {
   if (lastPersonaRec) return; // already set for this hand
+  if (personaRequesting) return; // concurrent call in flight — skip to avoid race overwrite
+  personaRequesting = true;
 
   // Derive temperature from VPIP/AF stats visible in the table DOM
   const tableStats = scrapeTableStats();
@@ -697,6 +709,8 @@ async function requestPersona(heroCards: string[], position: string) {
     }
   } catch {
     // Server not running — silently skip
+  } finally {
+    personaRequesting = false;
   }
 }
 
