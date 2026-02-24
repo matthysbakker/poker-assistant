@@ -1382,15 +1382,28 @@ function processGameState() {
       if (["FOLD", "CALL", "RAISE", "BET", "CHECK"].includes(personaAction)) {
         executing = true;
         preflopFastPathFired = true; // prevent stale pre-fetch from overwriting this advice
-        // Phase 1: attach euro amount to preflop RAISE from DOM button.
-        // No fallback — if the button has no parseable amount we send null (display "RAISE").
-        const raiseBtn = state.availableActions.find((a) => a.type === "RAISE" || a.type === "BET");
-        const preflopRaiseEur =
-          raiseBtn?.amount ? parseFloat(raiseBtn.amount.replace(/[€$£,]/g, "")) : null;
-        const preflopAmount = personaAction === "RAISE" || personaAction === "BET" ? preflopRaiseEur : null;
-        console.log(`[Poker] [Local/Preflop] ${lastPersonaRec.name} → ${personaAction}${preflopAmount != null ? ` €${preflopAmount.toFixed(2)}` : ""} (confidence 1.0)`);
+        // Compute a strategic raise size from BB rather than reading the DOM slider
+        // (action buttons may not be rendered yet when the fast-path fires).
+        // In an unraised pot: pot = SB + BB = 1.5 × BB → BB ≈ pot / 1.5
+        let preflopAmount: number | null = null;
+        if (personaAction === "RAISE" || personaAction === "BET") {
+          const pot = parseCurrency(state.pot);
+          if (pot > 0) {
+            const bb = pot / 1.5;
+            const activePlayers = state.players.filter((p) => p.name && !p.folded && p.hasCards);
+            const rawPos = getPosition(state.heroSeat, state.dealerSeat, activePlayers.length);
+            const pos = rawPos === "BTN/SB" ? "BTN" : rawPos;
+            // Late position (BTN/CO): open 2.5×BB; early/mid/SB: open 3×BB
+            const multiplier = ["BTN", "CO"].includes(pos) ? 2.5 : 3.0;
+            preflopAmount = Math.round(bb * multiplier * 100) / 100;
+          }
+        }
+        const bbTag = preflopAmount != null && parseCurrency(state.pot) > 0
+          ? ` (${(preflopAmount / (parseCurrency(state.pot) / 1.5)).toFixed(1)}BB)`
+          : "";
+        console.log(`[Poker] [Local/Preflop] ${lastPersonaRec.name} → ${personaAction}${preflopAmount != null ? ` €${preflopAmount.toFixed(2)}${bbTag}` : ""} (confidence 1.0)`);
         safeExecuteAction(
-          { action: personaAction, amount: preflopAmount, reasoning: `Preflop chart: ${lastPersonaRec.name}` },
+          { action: personaAction, amount: preflopAmount, reasoning: `Preflop chart: ${lastPersonaRec.name}${bbTag}` },
           "local",
         );
         lastHeroTurn = state.isHeroTurn;
