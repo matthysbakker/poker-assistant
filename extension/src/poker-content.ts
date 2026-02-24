@@ -1325,9 +1325,14 @@ function processGameState() {
       const personaAction = lastPersonaRec.action.toUpperCase() as AutopilotAction["action"];
       if (["FOLD", "CALL", "RAISE", "BET", "CHECK"].includes(personaAction)) {
         executing = true;
-        console.log(`[Poker] [Local/Preflop] ${lastPersonaRec.name} → ${personaAction} (confidence 1.0)`);
+        // Phase 1: attach euro amount to preflop RAISE from DOM button or default 3x BB
+        const raiseBtn = state.availableActions.find((a) => a.type === "RAISE" || a.type === "BET");
+        const preflopRaiseEur =
+          raiseBtn?.amount ? parseFloat(raiseBtn.amount.replace(/[€$£,]/g, "")) : 0.06;
+        const preflopAmount = personaAction === "RAISE" || personaAction === "BET" ? preflopRaiseEur : null;
+        console.log(`[Poker] [Local/Preflop] ${lastPersonaRec.name} → ${personaAction}${preflopAmount != null ? ` €${preflopAmount.toFixed(2)}` : ""} (confidence 1.0)`);
         safeExecuteAction(
-          { action: personaAction, amount: null, reasoning: `Preflop chart: ${lastPersonaRec.name}` },
+          { action: personaAction, amount: preflopAmount, reasoning: `Preflop chart: ${lastPersonaRec.name}` },
           "local",
         );
         lastHeroTurn = state.isHeroTurn;
@@ -1337,31 +1342,35 @@ function processGameState() {
     }
 
     // Phase 4 — Post-flop local engine fast-path
+    // Monitor mode: always use local engine regardless of confidence.
+    // Play mode: only use local engine when confidence >= CONFIDENCE_THRESHOLD.
     if (autopilotMode !== "off" && state.communityCards.length >= 3) {
       const local = localDecide(state);
-      if (local && local.confidence >= CONFIDENCE_THRESHOLD) {
-        executing = true;
-        console.log(`[Poker] [Local] ${local.action}${local.amount != null ? ` €${local.amount.toFixed(2)}` : ""} (confidence ${local.confidence.toFixed(2)}) — ${local.reasoning}`);
-        // Forward decision to web app for observability — fire-and-forget via background
-        chrome.runtime.sendMessage({
-          type: "LOCAL_DECISION",
-          payload: {
-            action: local.action,
-            amount: local.amount,
-            confidence: local.confidence,
-            reasoning: local.reasoning,
-            source: "local",
-          },
-        });
-        safeExecuteAction(
-          { action: local.action, amount: local.amount, reasoning: local.reasoning },
-          "local",
-        );
-        lastHeroTurn = state.isHeroTurn;
-        lastState = state;
-        return;
-      }
       if (local) {
+        const meetsThreshold = local.confidence >= CONFIDENCE_THRESHOLD;
+        if (autopilotMode === "monitor" || meetsThreshold) {
+          executing = true;
+          const confidenceTag = meetsThreshold ? "" : ` (~${(local.confidence * 100).toFixed(0)}% conf)`;
+          console.log(`[Poker] [Local] ${local.action}${local.amount != null ? ` €${local.amount.toFixed(2)}` : ""} (confidence ${local.confidence.toFixed(2)}) — ${local.reasoning}${confidenceTag}`);
+          // Forward decision to web app for observability — fire-and-forget via background
+          chrome.runtime.sendMessage({
+            type: "LOCAL_DECISION",
+            payload: {
+              action: local.action,
+              amount: local.amount,
+              confidence: local.confidence,
+              reasoning: local.reasoning,
+              source: "local",
+            },
+          });
+          safeExecuteAction(
+            { action: local.action, amount: local.amount, reasoning: local.reasoning + confidenceTag },
+            "local",
+          );
+          lastHeroTurn = state.isHeroTurn;
+          lastState = state;
+          return;
+        }
         console.log(`[Poker] [Local] Low confidence (${local.confidence.toFixed(2)}) — falling back to Claude: ${local.reasoning}`);
       }
     }
