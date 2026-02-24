@@ -37,6 +37,7 @@
 - [ ] #079 `079-pending-p3-magic-numbers-exploit.md` — Magic numbers in exploit.ts need named constants
 - [ ] #080 `080-pending-p3-isautopilotaction-nan-amount.md` — `isAutopilotAction` doesn't exclude `NaN` from amount
 - [ ] #081 `081-pending-p3-local-engine-not-agent-native.md` — Local engine decisions not visible to web app (agent-native gap)
+- [ ] #082 `082-pending-p3-betfractionfromwetscore-type.md` — `betFractionFromWetScore` parameter typed as `number` not `BoardTexture["wetScore"]`
 
 ---
 
