@@ -1101,9 +1101,11 @@ function updateOverlay(state: GameState) {
   // Persona section — all 4 personas shown preflop, active persona shown post-flop
   const isPreflop = state.communityCards.length === 0 && state.heroCards.length > 0;
 
-  // Concrete raise amount: use the actual raise button value if available, else 3x BB default
+  // Concrete raise amount: only show when a RAISE/BET button is actually in the DOM.
+  // When hero is facing a raise (only Fold+Call available) there is no raise button, so
+  // we omit the amount to avoid displaying the misleading €0.06 open-raise default.
   const raiseOpt = state.availableActions.find(a => a.type === "RAISE" || a.type === "BET");
-  const preflopRaiseAmt = raiseOpt?.amount ?? "€0.06";
+  const preflopRaiseAmt = raiseOpt?.amount ?? null;
 
   let personaHtml = "";
   if (lastPersonaRec?.allPersonas.length) {
@@ -1116,7 +1118,9 @@ function updateOverlay(state: GameState) {
           : "best";
       const rows = lastPersonaRec.allPersonas.map(p => {
         const isSelected = p.selected;
-        const actionStr = p.action === "RAISE" ? `RAISE ${preflopRaiseAmt}` : p.action;
+        const actionStr = (p.action === "RAISE" || p.action === "BET")
+          ? (preflopRaiseAmt ? `${p.action} ${preflopRaiseAmt}` : p.action)
+          : p.action;
         const actionColor = p.action === "RAISE" ? "#4ade80" : p.action === "CALL" ? "#fbbf24" : "#52525b";
         const prefix = isSelected ? `<span style="color:#818cf8">★</span>` : `<span style="color:#3f3f46">·</span>`;
         const nameStyle = isSelected ? "color:#e4e4e7;font-weight:bold" : "color:#52525b";
