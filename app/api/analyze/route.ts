@@ -14,6 +14,13 @@ import {
 
 export const maxDuration = 30;
 
+/** Replace obvious Claude OCR outliers with "[misread]" */
+function sanitizeAmount(value: string, maxReasonable: number): string {
+  const num = parseFloat(value.replace(/[€$£, ]/g, ""));
+  if (!isNaN(num) && num > maxReasonable) return "[misread]";
+  return value;
+}
+
 const opponentHistorySchema = z.record(
   z.coerce.number(),
   z.object({
@@ -105,8 +112,42 @@ export async function POST(req: Request) {
     const timestamp = new Date().toISOString();
 
     result.object
-      .then(async (analysis) => {
-        if (!analysis.action) return;
+      .then(async (rawAnalysis) => {
+        if (!rawAnalysis.action) return;
+
+        // Sanitize obvious OCR outliers and enforce detected cards as ground truth
+        let analysis = {
+          ...rawAnalysis,
+          potSize: sanitizeAmount(rawAnalysis.potSize, 500),
+          heroStack: sanitizeAmount(rawAnalysis.heroStack, 2000),
+        };
+
+        // Enforce detected cards: overwrite Claude's vision reads with ground truth
+        // If detection only found 1 of 2 hero cards, store "Qc ??" not Claude's guess
+        if (detection) {
+          const enforceCards = (matches: import("@/lib/card-detection/types").CardMatch[]) =>
+            matches
+              .filter((m) => m.confidence === "HIGH" || m.confidence === "MEDIUM")
+              .map((m) => m.card)
+              .filter(Boolean)
+              .join(" ");
+
+          const detectedHero = enforceCards(detection.heroCards);
+          const detectedCommunity = enforceCards(detection.communityCards);
+
+          if (detectedHero) {
+            // If detection found fewer cards than Claude expects, mark unknowns explicitly
+            const detectedCount = detectedHero.split(" ").length;
+            const heroWithPlaceholders =
+              detectedCount < 2
+                ? detectedHero + " ??".repeat(2 - detectedCount)
+                : detectedHero;
+            analysis = { ...analysis, heroCards: heroWithPlaceholders.trim() };
+          }
+          if (detectedCommunity !== undefined && detectedCommunity !== "") {
+            analysis = { ...analysis, communityCards: detectedCommunity };
+          }
+        }
 
         const record: HandRecord = {
           id: handId,
