@@ -368,16 +368,22 @@ function scrapeAvailableActions(): ActionOption[] {
 
   actionsArea.querySelectorAll(".base-button").forEach((btn) => {
     // Playtech renders dual spans per button (visual + aria label) so btn.textContent gives "FoldFold".
-    // The first LEAF span (no child spans) holds just the visible label.
+    // Collect ALL leaf spans (no child spans) and join them — this captures split labels like
+    // ["Raise To", "€1.25"] as a single string "Raise To €1.25".
     // Pre-action toggles (e.g. "Check/Fold", "Fold/Check") are also .base-button — skip them
     // by detecting the "/" separator; real action buttons never have slashes in their label.
     const spans = btn.querySelectorAll("span");
-    // Find the first leaf span (no child spans), fall back to btn.textContent
-    let text = "";
+    const leafTexts: string[] = [];
     for (const s of spans) {
-      if (s.querySelector("span") === null) { text = s.textContent?.trim() ?? ""; break; }
+      if (s.querySelector("span") === null) {
+        const t = s.textContent?.trim() ?? "";
+        if (t) leafTexts.push(t);
+      }
     }
-    if (!text) text = btn.textContent?.trim() ?? "";
+    // Deduplicate consecutive identical entries (Playtech aria duplication: "Fold","Fold" → "Fold")
+    const deduped = leafTexts.filter((t, i) => i === 0 || t !== leafTexts[i - 1]);
+    const fallbackText = btn.textContent?.trim() ?? "";
+    let text = deduped.join(" ") || fallbackText;
     if (!text || text.includes("/")) return; // skip pre-action toggles
 
     const lowerText = text.toLowerCase();
