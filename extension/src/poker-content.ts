@@ -1136,7 +1136,10 @@ function updateOverlay(state: GameState) {
     personaHtml = `<div style="border-top:1px solid #3f3f46;margin-top:6px;padding-top:6px;color:#52525b">Personas loading…</div>`;
   }
 
-  // Claude advice line — web-app advice takes precedence; fall back to monitor API advice
+  // Advice line priority:
+  // Monitor mode: local engine / autopilot decision (monitorAdvice) wins — it's instant and
+  //   stake-aware. Web-app Claude advice (lastClaudeAdvice) is shown only as fallback.
+  // Other modes: web-app Claude advice takes precedence (richer reasoning).
   const webAdviceRec = lastClaudeAdvice?.action
     ? lastClaudeAdvice.action + (lastClaudeAdvice.amount ? ` ${lastClaudeAdvice.amount}` : "")
     : null;
@@ -1145,12 +1148,15 @@ function updateOverlay(state: GameState) {
     : "";
   // Distinguish real autopilot advice from error fallbacks ("Auto-fold: ...")
   const isMonitorError = !!monitorAdvice && monitorAdvice.reasoning.startsWith("Auto-fold:");
-  const monAdviceRec = !webAdviceRec && monitorAdvice && !isMonitorError
+  const monAdviceRec = monitorAdvice && !isMonitorError
     ? monitorAdvice.action + (monitorAdvice.amount != null ? ` €${monitorAdvice.amount.toFixed(2)}` : "")
     : null;
-  const adviceRec = webAdviceRec ?? monAdviceRec;
-  const adviceExtra = webAdviceRec ? webAdviceExtra : "";
-  const adviceReasoning = !webAdviceRec && monitorAdvice?.reasoning && !isMonitorError
+  // In monitor mode: local engine advice first; web-app Claude only as fallback.
+  const adviceRec = autopilotMode === "monitor"
+    ? (monAdviceRec ?? webAdviceRec)
+    : (webAdviceRec ?? monAdviceRec);
+  const adviceExtra = (adviceRec === webAdviceRec && adviceRec !== null) ? webAdviceExtra : "";
+  const adviceReasoning = (adviceRec === monAdviceRec && monitorAdvice?.reasoning && !isMonitorError)
     ? ` — ${escapeHtml(monitorAdvice.reasoning.slice(0, 80))}${monitorAdvice.reasoning.length > 80 ? "…" : ""}`
     : "";
   const errorMsg = isMonitorError
