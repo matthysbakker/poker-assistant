@@ -1001,10 +1001,16 @@ async function executeAction(decision: AutopilotAction) {
  * Callers set executing=true before calling; this function clears it via executeAction().
  */
 function safeExecuteAction(action: AutopilotAction, source: "claude" | "local" = "claude") {
-  // 1. Safety: never fold when checking is free — query live DOM, not stale lastState
+  // 1. Safety: never fold when checking is free — query live DOM, not stale lastState.
+  // Only override when CHECK is available AND CALL is NOT — if both appear the pre-action
+  // "Check" toggle is selected and CALL is the real option; folding there is a real choice.
   let finalAction = action;
-  if (action.action === "FOLD" && findActionButton("CHECK") !== null) {
-    console.warn("[Poker] Overriding FOLD → CHECK (check is available)");
+  if (
+    action.action === "FOLD" &&
+    findActionButton("CHECK") !== null &&
+    findActionButton("CALL") === null
+  ) {
+    console.warn("[Poker] Overriding FOLD → CHECK (check is truly free — no call available)");
     finalAction = { ...action, action: "CHECK", amount: null };
   }
 
@@ -1123,8 +1129,10 @@ function updateOverlay(state: GameState) {
         : lastPersonaRec.temperature !== "unknown"
           ? lastPersonaRec.temperature.replaceAll("_", "-")
           : "best";
-      // If CHECK is available, FOLD is effectively CHECK (can't fold a free action)
-      const checkFree = state.availableActions.some(a => a.type === "CHECK");
+      // CHECK is truly free only when CHECK is available AND CALL is not.
+      // If both appear, the pre-action "Check" toggle is active but CALL is the real decision.
+      const checkFree = state.availableActions.some(a => a.type === "CHECK") &&
+                        !state.availableActions.some(a => a.type === "CALL");
       const rows = lastPersonaRec.allPersonas.map(p => {
         const isSelected = p.selected;
         // Apply FOLD→CHECK safety override in display too (mirrors safeExecuteAction)
