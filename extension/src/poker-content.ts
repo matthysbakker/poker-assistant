@@ -366,11 +366,18 @@ function scrapeAvailableActions(): ActionOption[] {
   if (!actionsArea) return actions;
 
   actionsArea.querySelectorAll(".base-button").forEach((btn) => {
-    // Playtech renders dual spans per button (visual + aria label) so textContent gives "FoldFold".
-    // Use the first span's text; fall back to full textContent if no span found.
-    const firstSpan = btn.querySelector("span");
-    const text = firstSpan?.textContent?.trim() || btn.textContent?.trim() || "";
-    if (!text) return;
+    // Playtech renders dual spans per button (visual + aria label) so btn.textContent gives "FoldFold".
+    // The first LEAF span (no child spans) holds just the visible label.
+    // Pre-action toggles (e.g. "Check/Fold", "Fold/Check") are also .base-button — skip them
+    // by detecting the "/" separator; real action buttons never have slashes in their label.
+    const spans = btn.querySelectorAll("span");
+    // Find the first leaf span (no child spans), fall back to btn.textContent
+    let text = "";
+    for (const s of spans) {
+      if (s.querySelector("span") === null) { text = s.textContent?.trim() ?? ""; break; }
+    }
+    if (!text) text = btn.textContent?.trim() ?? "";
+    if (!text || text.includes("/")) return; // skip pre-action toggles
 
     const lowerText = text.toLowerCase();
 
@@ -1116,12 +1123,16 @@ function updateOverlay(state: GameState) {
         : lastPersonaRec.temperature !== "unknown"
           ? lastPersonaRec.temperature.replaceAll("_", "-")
           : "best";
+      // If CHECK is available, FOLD is effectively CHECK (can't fold a free action)
+      const checkFree = state.availableActions.some(a => a.type === "CHECK");
       const rows = lastPersonaRec.allPersonas.map(p => {
         const isSelected = p.selected;
-        const actionStr = (p.action === "RAISE" || p.action === "BET")
-          ? (preflopRaiseAmt ? `${p.action} ${preflopRaiseAmt}` : p.action)
-          : p.action;
-        const actionColor = p.action === "RAISE" ? "#4ade80" : p.action === "CALL" ? "#fbbf24" : "#52525b";
+        // Apply FOLD→CHECK safety override in display too (mirrors safeExecuteAction)
+        const displayAction = p.action === "FOLD" && checkFree ? "CHECK" : p.action;
+        const actionStr = (displayAction === "RAISE" || displayAction === "BET")
+          ? (preflopRaiseAmt ? `${displayAction} ${preflopRaiseAmt}` : displayAction)
+          : displayAction;
+        const actionColor = displayAction === "RAISE" || displayAction === "BET" ? "#4ade80" : displayAction === "CALL" ? "#fbbf24" : displayAction === "CHECK" && checkFree && p.action === "FOLD" ? "#71717a" : "#52525b";
         const prefix = isSelected ? `<span style="color:#818cf8">★</span>` : `<span style="color:#3f3f46">·</span>`;
         const nameStyle = isSelected ? "color:#e4e4e7;font-weight:bold" : "color:#52525b";
         const tag = isSelected ? ` <span style="color:#3f3f46;font-size:10px">[${escapeHtml(selectionTag)}]</span>` : "";
