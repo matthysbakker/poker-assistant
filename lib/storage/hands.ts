@@ -1,5 +1,7 @@
 import type { HandAnalysis } from "@/lib/ai/schema";
 
+const MAX_HANDS = 50;
+
 export interface StoredHand {
   id: string;
   timestamp: number;
@@ -34,6 +36,7 @@ export function saveHand(
 
   const hands = getStoredHands();
   hands.unshift(hand);
+  if (hands.length > MAX_HANDS) hands.length = MAX_HANDS;
   localStorage.setItem(STORAGE_KEY, JSON.stringify(hands));
 
   return hand;

@@ -4,8 +4,8 @@ import { handAnalysisSchema } from "./schema";
 import { SYSTEM_PROMPT, SYSTEM_PROMPT_WITH_DETECTED_CARDS, buildOpponentContext } from "./system-prompt";
 
 const MODELS = {
-  continuous: "claude-haiku-4-5-20251001",
-  manual: "claude-sonnet-4-20250514",
+  continuous: "claude-haiku-4-5",
+  manual: "claude-sonnet-4-5",
 } as const;
 
 interface OpponentHistoryEntry {

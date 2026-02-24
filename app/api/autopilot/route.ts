@@ -6,6 +6,9 @@ import { AUTOPILOT_SYSTEM_PROMPT } from "@/lib/ai/autopilot-prompt";
 
 export const maxDuration = 15;
 
+let lastAnalyzeMs = 0;
+const MIN_ANALYZE_INTERVAL_MS = 3000;
+
 const messageSchema = z.object({
   role: z.enum(["user", "assistant"]),
   content: z.string().max(4000), // one poker street of context is well under this
@@ -16,6 +19,12 @@ const requestSchema = z.object({
 });
 
 export async function POST(req: Request) {
+  const now = Date.now();
+  if (now - lastAnalyzeMs < MIN_ANALYZE_INTERVAL_MS) {
+    return Response.json({ error: "Rate limit: too many requests." }, { status: 429 });
+  }
+  lastAnalyzeMs = now;
+
   let body: unknown;
   try {
     body = await req.json();
@@ -33,7 +42,7 @@ export async function POST(req: Request) {
 
   try {
     const { object } = await generateObject({
-      model: anthropic("claude-haiku-4-5-20251001"),
+      model: anthropic("claude-haiku-4-5"),
       schema: autopilotActionSchema,
       system: AUTOPILOT_SYSTEM_PROMPT,
       messages: parsed.data.messages,

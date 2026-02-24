@@ -71,7 +71,7 @@ export function applyRuleTree(input: RuleTreeInput): LocalDecision {
 
   // Need at least the flop to make post-flop decisions
   if (communityCards.length < 3) {
-    return { action: "FOLD", amount: null, confidence: 0, reasoning: "Pre-flop: use persona chart" };
+    return { action: "CHECK", amount: null, confidence: 0, reasoning: "Pre-flop: use persona chart" };
   }
 
   const board = analyzeBoard(communityCards);

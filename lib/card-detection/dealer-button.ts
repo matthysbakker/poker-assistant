@@ -78,7 +78,9 @@ const WEIGHT_CIRCULARITY = 0.25;
 export async function detectDealerButton(
   imageBuffer: Buffer,
 ): Promise<number | null> {
-  const { data, info } = await sharp(imageBuffer)
+  const { data, info } = await sharp(imageBuffer, {
+    limitInputPixels: 25_000_000,
+  })
     .resize(ANALYSIS_WIDTH, null)
     .removeAlpha()
     .raw()

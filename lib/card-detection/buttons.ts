@@ -13,7 +13,9 @@ import sharp from "sharp";
 export async function detectActionButtons(
   imageBuffer: Buffer,
 ): Promise<boolean> {
-  const meta = await sharp(imageBuffer).metadata();
+  const meta = await sharp(imageBuffer, {
+    limitInputPixels: 25_000_000,
+  }).metadata();
   if (!meta.width || !meta.height) return false;
 
   // ROI: bottom 20%, right 60% of image (where buttons appear)
@@ -25,7 +27,9 @@ export async function detectActionButtons(
   if (roiWidth <= 0 || roiHeight <= 0) return false;
 
   // Extract ROI as raw RGB
-  const { data, info } = await sharp(imageBuffer)
+  const { data, info } = await sharp(imageBuffer, {
+    limitInputPixels: 25_000_000,
+  })
     .extract({ left: roiLeft, top: roiTop, width: roiWidth, height: roiHeight })
     .resize(120, 40, { fit: "fill" }) // downscale for speed
     .removeAlpha()

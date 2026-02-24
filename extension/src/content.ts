@@ -1,4 +1,5 @@
 // Extension message protocol — see background.ts for full type reference
+import { VALID_ACTIONS, isValidAction } from "./messages";
 
 console.log("[Content] Loaded on", window.location.href);
 
@@ -31,6 +32,10 @@ window.addEventListener("message", (event) => {
 
   // Forward persona recommendation to background, which relays to the poker tab (todo 050)
   if (event.data.type === "PERSONA_RECOMMENDATION") {
+    if (!isValidAction(event.data.action)) {
+      console.warn("[Content] PERSONA_RECOMMENDATION has invalid action, dropping:", event.data.action);
+      return;
+    }
     chrome.runtime.sendMessage({
       type: "PERSONA_RECOMMENDATION",
       personaName: event.data.personaName,
@@ -60,13 +65,13 @@ chrome.runtime.onMessage.addListener((message) => {
     // Manual hotkey capture → immediate analysis
     window.postMessage(
       { source: "poker-assistant-ext", type: "CAPTURE", base64: message.base64 },
-      "*"
+      window.location.origin
     );
   } else if (message.type === "CAPTURE_FRAME") {
     // Continuous capture frame → state machine processing
     window.postMessage(
       { source: "poker-assistant-ext", type: "FRAME", base64: message.base64 },
-      "*"
+      window.location.origin
     );
   }
 });

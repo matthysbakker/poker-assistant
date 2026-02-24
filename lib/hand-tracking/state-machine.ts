@@ -1,5 +1,5 @@
 import type { CardCode, DetectionResult } from "@/lib/card-detection/types";
-import type { HandState, HandAction, Street, StreetSnapshot } from "./types";
+import type { HandState, HandAction, HandPhase, StreetSnapshot } from "./types";
 
 /** Frames required to confirm a forward street transition. */
 const FORWARD_HYSTERESIS = 2;
@@ -24,7 +24,7 @@ export const INITIAL_STATE: HandState = {
 function streetFromCommunityCount(
   heroCount: number,
   communityCount: number,
-): Street {
+): HandPhase {
   if (heroCount === 0) return "WAITING";
   if (communityCount === 0) return "PREFLOP";
   if (communityCount <= 3) return "FLOP";
@@ -33,7 +33,7 @@ function streetFromCommunityCount(
 }
 
 /** Street ordering for forward-only enforcement. */
-const STREET_ORDER: Record<Street, number> = {
+const STREET_ORDER: Record<HandPhase, number> = {
   WAITING: 0,
   PREFLOP: 1,
   FLOP: 2,

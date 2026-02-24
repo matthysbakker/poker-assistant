@@ -55,32 +55,35 @@ const CORNER_HEIGHT_FRAC = 0.50;
 export async function locateCards(
   imageBuffer: Buffer,
 ): Promise<LocatedCard[]> {
-  const metadata = await sharp(imageBuffer).metadata();
+  const metadata = await sharp(imageBuffer, {
+    limitInputPixels: 25_000_000,
+  }).metadata();
   const origWidth = metadata.width!;
   const origHeight = metadata.height!;
 
   const scale = ANALYSIS_WIDTH / origWidth;
   const analysisHeight = Math.round(origHeight * scale);
 
-  // Two passes: blurred for blob detection, un-blurred for verification
-  const [blurred, unblurred] = await Promise.all([
-    sharp(imageBuffer)
-      .resize(ANALYSIS_WIDTH, analysisHeight)
-      .greyscale()
-      .blur(BLUR_SIGMA)
-      .raw()
-      .toBuffer({ resolveWithObject: true }),
-    sharp(imageBuffer)
-      .resize(ANALYSIS_WIDTH, analysisHeight)
-      .greyscale()
-      .raw()
-      .toBuffer({ resolveWithObject: true }),
-  ]);
+  // Single decode: resize + greyscale once, then derive blur from raw buffer
+  const { data: rawData, info } = await sharp(imageBuffer, {
+    limitInputPixels: 25_000_000,
+  })
+    .resize(ANALYSIS_WIDTH, analysisHeight)
+    .greyscale()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
 
-  const data = blurred.data;
-  const w = blurred.info.width;
-  const h = blurred.info.height;
-  const rawData = unblurred.data;
+  // Derive blurred version from already-decoded raw buffer (no re-decode)
+  const blurredData = await sharp(rawData, {
+    raw: { width: info.width, height: info.height, channels: 1 },
+  })
+    .blur(BLUR_SIGMA)
+    .raw()
+    .toBuffer();
+
+  const data = blurredData;
+  const w = info.width;
+  const h = info.height;
 
   // Binary mask from blurred image (smooths card interiors)
   const mask = new Uint8Array(w * h);

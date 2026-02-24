@@ -223,21 +223,19 @@ function main() {
   }
 
   // Detection accuracy breakdown
-  const allDetails = records.flatMap((r) => r.detectionDetails);
-  if (allDetails.length > 0) {
+  const allMatches = records.flatMap((r) => [
+    ...(r.heroCardMatches ?? []),
+    ...(r.communityCardMatches ?? []),
+  ]);
+  if (allMatches.length > 0) {
     console.log("\nCard detection:");
-    const byConf = count(allDetails, (d) => d.confidence);
-    const total = allDetails.length;
+    const byConf = count(allMatches, (m) => m.confidence);
+    const total = allMatches.length;
     console.log(`  Total cards detected: ${total}`);
-    for (const conf of ["HIGH", "MEDIUM", "LOW", "NONE"] as const) {
+    for (const conf of ["HIGH", "MEDIUM", "LOW", "NONE"]) {
       const n = byConf[conf] ?? 0;
       if (n > 0) {
-        const subset = allDetails.filter((d) => d.confidence === conf);
-        const avgScore = subset.reduce((s, d) => s + d.matchScore, 0) / n;
-        const avgGap = subset.reduce((s, d) => s + d.gap, 0) / n;
-        console.log(
-          `  ${conf}: ${n} (${((n / total) * 100).toFixed(1)}%)  avg score: ${(avgScore * 100).toFixed(1)}%  avg gap: ${(avgGap * 100).toFixed(1)}%`,
-        );
+        console.log(`  ${conf}: ${n} (${((n / total) * 100).toFixed(1)}%)`);
       }
     }
   }

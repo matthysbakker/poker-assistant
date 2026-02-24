@@ -7,12 +7,15 @@ import type { DetectionResult } from "@/lib/card-detection/types";
 import { positionSchema } from "@/lib/card-detection/types";
 import { tableTemperatureSchema } from "@/lib/poker/table-temperature";
 import {
-  buildDetectionDetails,
   writeHandRecord,
   type HandRecord,
 } from "@/lib/storage/hand-records";
+import { parseDomCards } from "@/lib/hand-tracking/hand-context";
 
 export const maxDuration = 30;
+
+let lastAnalyzeMs = 0;
+const MIN_ANALYZE_INTERVAL_MS = 3000;
 
 /** Replace obvious Claude OCR outliers with "[misread]" */
 function sanitizeAmount(value: string, maxReasonable: number): string {
@@ -21,24 +24,25 @@ function sanitizeAmount(value: string, maxReasonable: number): string {
   return value;
 }
 
-/**
- * Parse hero and community cards from the DOM-scraped handContext string.
- * The poker client renders cards as SVG filenames — 100% accurate ground truth.
- * Format: "Hero holds: 6d Qs — OFFSUIT ..." and "Board: Jh Qd 5c"
- */
-function parseDomCards(handContext: string | undefined): {
-  heroCards: string[];
-  communityCards: string[];
-} {
-  if (!handContext) return { heroCards: [], communityCards: [] };
+/** Filter card matches to HIGH/MEDIUM confidence and join into a space-separated string. */
+function extractConfidentCards(matches: { card: string | null; confidence: string }[]): string {
+  return matches
+    .filter((m) => m.confidence === "HIGH" || m.confidence === "MEDIUM")
+    .map((m) => m.card)
+    .filter((c): c is string => c !== null && c.length > 0)
+    .join(" ");
+}
 
-  const heroMatch = handContext.match(/Hero holds:\s+([A-Za-z0-9]+(?:\s+[A-Za-z0-9]+)?)/);
-  const boardMatch = handContext.match(/Board:\s+([A-Za-z0-9 ]+?)(?:\s*\n|$)/m);
+/** DOM cards take absolute priority; fall back to image detection. */
+function resolveHeroCards(domCards: string[], detection: DetectionResult | null): string {
+  if (domCards.length > 0) return domCards.join(" ");
+  return extractConfidentCards(detection?.heroCards ?? []);
+}
 
-  return {
-    heroCards: heroMatch ? heroMatch[1].trim().split(/\s+/).filter(Boolean) : [],
-    communityCards: boardMatch ? boardMatch[1].trim().split(/\s+/).filter(Boolean) : [],
-  };
+/** DOM cards take absolute priority; fall back to image detection. */
+function resolveCommunityCards(domCards: string[], detection: DetectionResult | null): string {
+  if (domCards.length > 0) return domCards.join(" ");
+  return extractConfidentCards(detection?.communityCards ?? []);
 }
 
 const opponentHistorySchema = z.record(
@@ -75,6 +79,12 @@ const requestSchema = z.object({
 });
 
 export async function POST(req: Request) {
+  const now = Date.now();
+  if (now - lastAnalyzeMs < MIN_ANALYZE_INTERVAL_MS) {
+    return Response.json({ error: "Rate limit: too many requests." }, { status: 429 });
+  }
+  lastAnalyzeMs = now;
+
   let body: unknown;
   try {
     body = await req.json();
@@ -91,6 +101,11 @@ export async function POST(req: Request) {
     );
   }
 
+  const imageBytes = Buffer.byteLength(parsed.data.image, "base64");
+  if (imageBytes > 8_000_000) {
+    return Response.json({ error: "Image too large." }, { status: 413 });
+  }
+
   // Save capture to disk (opt-in via SAVE_CAPTURES=true)
   if (process.env.SAVE_CAPTURES === "true") {
     const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
@@ -105,41 +120,33 @@ export async function POST(req: Request) {
   // DOM cards: parsed from handContext — 100% accurate (SVG filenames from poker client)
   const domCards = parseDomCards(parsed.data.handContext);
 
-  // Image detection: run for dealer button / position only
+  // Image detection: only run if heroPosition is not already provided by the client.
+  // When heroPosition is known (DOM-scraped), we skip the expensive detectCards call.
   let detection: DetectionResult | null = null;
-  try {
-    detection = await detectCards(parsed.data.image);
-  } catch (err) {
-    console.error("[card-detection] Failed:", err);
+  if (!parsed.data.heroPosition) {
+    try {
+      detection = await detectCards(parsed.data.image);
+    } catch (err) {
+      console.error("[card-detection] Failed:", err);
+    }
   }
 
   // Build detectedCards string for Claude: DOM cards take priority over image detection
   let detectedCards: string | undefined;
   {
     const parts: string[] = [];
-    const position = detection?.heroPosition;
+    // Position: prefer image detection result, fall back to request body value
+    const position = detection?.heroPosition ?? parsed.data.heroPosition ?? null;
     if (position) parts.push(`Hero position: ${position}`);
 
-    if (domCards.heroCards.length > 0) {
-      parts.push(`Hero: ${domCards.heroCards.join(" ")}`);
-      console.log(`[dom-cards] Hero: ${domCards.heroCards.join(" ")}`);
-    } else {
-      // Fallback to image detection for hero cards
-      const imgHero = detection?.heroCards
-        .filter((m) => m.confidence === "HIGH" || m.confidence === "MEDIUM")
-        .map((m) => m.card).filter(Boolean).join(" ");
-      if (imgHero) parts.push(`Hero: ${imgHero}`);
+    const hero = resolveHeroCards(domCards.heroCards, detection);
+    if (hero) {
+      parts.push(`Hero: ${hero}`);
+      if (domCards.heroCards.length > 0) console.log(`[dom-cards] Hero: ${hero}`);
     }
 
-    if (domCards.communityCards.length > 0) {
-      parts.push(`Board: ${domCards.communityCards.join(" ")}`);
-    } else {
-      // Fallback to image detection for community cards
-      const imgBoard = detection?.communityCards
-        .filter((m) => m.confidence === "HIGH" || m.confidence === "MEDIUM")
-        .map((m) => m.card).filter(Boolean).join(" ");
-      if (imgBoard) parts.push(`Board: ${imgBoard}`);
-    }
+    const board = resolveCommunityCards(domCards.communityCards, detection);
+    if (board) parts.push(`Board: ${board}`);
 
     detectedCards = parts.length > 0 ? parts.join(", ") : undefined;
     if (detectedCards) console.log(`[detected] ${detectedCards}`);
@@ -172,29 +179,21 @@ export async function POST(req: Request) {
           heroStack: sanitizeAmount(rawAnalysis.heroStack, 2000),
         };
 
-        // Enforce ground truth cards in stored record — DOM cards take absolute priority
-        if (domCards.heroCards.length > 0) {
-          analysis = { ...analysis, heroCards: domCards.heroCards.join(" ") };
-        } else if (detection) {
-          // Fallback: image detection with placeholder for missing cards
-          const imgHero = detection.heroCards
-            .filter((m) => m.confidence === "HIGH" || m.confidence === "MEDIUM")
-            .map((m) => m.card).filter(Boolean).join(" ");
-          if (imgHero) {
-            const count = imgHero.split(" ").length;
-            const withPlaceholders = count < 2 ? imgHero + " ??".repeat(2 - count) : imgHero;
-            analysis = { ...analysis, heroCards: withPlaceholders.trim() };
-          }
-        }
+        // Enforce ground truth cards in stored record — DOM cards take absolute priority.
+        // Note: storage path intentionally adds ?? placeholders for missing hero cards
+        // (unlike the Claude prompt path which omits partial cards). This divergence is
+        // deliberate: storage must always record two card slots for Texas Hold'em hands.
+        const storedHero = (() => {
+          if (domCards.heroCards.length > 0) return domCards.heroCards.join(" ");
+          const imgHero = resolveHeroCards(domCards.heroCards, detection);
+          if (!imgHero) return null;
+          const count = imgHero.split(" ").length;
+          return count < 2 ? (imgHero + " ??".repeat(2 - count)).trim() : imgHero;
+        })();
+        if (storedHero) analysis = { ...analysis, heroCards: storedHero };
 
-        if (domCards.communityCards.length > 0) {
-          analysis = { ...analysis, communityCards: domCards.communityCards.join(" ") };
-        } else if (detection) {
-          const imgBoard = detection.communityCards
-            .filter((m) => m.confidence === "HIGH" || m.confidence === "MEDIUM")
-            .map((m) => m.card).filter(Boolean).join(" ");
-          if (imgBoard) analysis = { ...analysis, communityCards: imgBoard };
-        }
+        const storedBoard = resolveCommunityCards(domCards.communityCards, detection);
+        if (storedBoard) analysis = { ...analysis, communityCards: storedBoard };
 
         const record: HandRecord = {
           id: handId,
@@ -204,7 +203,8 @@ export async function POST(req: Request) {
           pokerHandId: parsed.data.pokerHandId ?? null,
           screenshotFile: `${timestamp.slice(0, 10)}/${handId}.png`,
           detectedText: detectedCards ?? null,
-          detectionDetails: buildDetectionDetails(detection),
+          heroCardMatches: detection?.heroCards?.map((m) => ({ card: m.card ?? "", confidence: m.confidence })) ?? null,
+          communityCardMatches: detection?.communityCards?.map((m) => ({ card: m.card ?? "", confidence: m.confidence })) ?? null,
           handContext: parsed.data.handContext ?? null,
           opponentHistory: parsed.data.opponentHistory ?? null,
           systemPromptVariant: detectedCards

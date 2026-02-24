@@ -26,6 +26,11 @@ export async function POST(req: Request) {
     );
   }
 
+  const imageBytes = Buffer.byteLength(parsed.data.image, "base64");
+  if (imageBytes > 8_000_000) {
+    return Response.json({ error: "Image too large." }, { status: 413 });
+  }
+
   try {
     const detection = await detectCards(parsed.data.image, {
       skipDealerDetection: parsed.data.hasPosition,

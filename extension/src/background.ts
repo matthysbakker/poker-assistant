@@ -30,6 +30,8 @@
  *   PING                page → content   Request EXTENSION_CONNECTED reply
  */
 
+import { VALID_ACTIONS } from "./messages";
+
 let webAppTabId: number | null = null;
 let lastCaptureTime = 0;
 const DEBOUNCE_MS = 3000;
@@ -41,9 +43,10 @@ let pokerWindowId: number | null = null;
 // Autopilot state
 let pokerTabId: number | null = null;
 let autopilotMode: "off" | "monitor" | "play" = "off";
-const AUTOPILOT_API_URL = "http://localhost:3006/api/autopilot";
-const DECISION_API_URL = "http://localhost:3006/api/decision";
-const RECORD_API_URL = "http://localhost:3006/api/record";
+const BASE_URL = "http://localhost:3006"; // override APP_URL env var at build time if needed
+const AUTOPILOT_API_URL = `${BASE_URL}/api/autopilot`;
+const DECISION_API_URL = `${BASE_URL}/api/decision`;
+const RECORD_API_URL = `${BASE_URL}/api/record`;
 
 console.log("[BG] Background script started");
 
@@ -110,7 +113,7 @@ function startContinuousCapture() {
           sendFrame(base64, "CAPTURE_FRAME");
         },
       );
-    }, 1000);
+    }, 2000);
 
     setBadge("ON", "#22c55e", 0); // persistent badge
   });
@@ -149,10 +152,9 @@ async function fetchAutopilotDecision(
     const action = await res.json();
 
     // Validate shape before forwarding to real-money DOM executor (todo 038)
-    const validActions = ["FOLD", "CHECK", "CALL", "RAISE", "BET"];
     if (
       !action ||
-      !validActions.includes(action.action) ||
+      !(VALID_ACTIONS as readonly string[]).includes(action.action) ||
       (action.amount !== null && !Number.isFinite(action.amount)) ||
       typeof action.reasoning !== "string"
     ) {

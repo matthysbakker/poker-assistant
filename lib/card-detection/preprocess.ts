@@ -65,7 +65,9 @@ function tightBBox(
  */
 export async function preprocessCrop(cropPng: Buffer): Promise<Buffer | null> {
   // Step 1: Resize to working size and get greyscale
-  const { data: greyData, info } = await sharp(cropPng)
+  const { data: greyData, info } = await sharp(cropPng, {
+    limitInputPixels: 25_000_000,
+  })
     .resize(WORK_W, WORK_H)
     .greyscale()
     .raw()

@@ -3,10 +3,10 @@ import type { DetectionResult } from "@/lib/card-detection/types";
 import type { HandAnalysis } from "@/lib/ai/schema";
 import type { TableTemperature } from "@/lib/poker/table-temperature";
 
-export type Street = "WAITING" | "PREFLOP" | "FLOP" | "TURN" | "RIVER";
+export type HandPhase = "WAITING" | "PREFLOP" | "FLOP" | "TURN" | "RIVER";
 
 export interface StreetSnapshot {
-  street: Street;
+  street: HandPhase;
   heroCards: CardCode[];
   communityCards: CardCode[];
   /** Claude's completed analysis for this street, stored after streaming finishes. */
@@ -15,7 +15,7 @@ export interface StreetSnapshot {
 
 export interface HandState {
   /** Current street in the hand. */
-  street: Street;
+  street: HandPhase;
   /** Detected hero cards (card codes). */
   heroCards: CardCode[];
   /** Detected community cards (card codes). */
@@ -27,7 +27,7 @@ export interface HandState {
   /** Consecutive frames at the current detected card count (for hysteresis). */
   frameCount: number;
   /** Pending detection that the hysteresis is waiting to confirm. */
-  pendingStreet: Street | null;
+  pendingStreet: HandPhase | null;
   /** Incremented each time Claude analysis should be triggered. */
   analyzeGeneration: number;
   /** Whether a Claude request is currently in flight. */

@@ -9,6 +9,8 @@
  * e.g. "Ah", "10s", "Kd", "2c"
  */
 
+import { parseCard, type Card as ParsedCard } from "./equity/card";
+
 export type HandTier =
   | "nut"           // straight flush, quads, nut flush (A-high)
   | "strong"        // flush, straight, full house, set
@@ -27,28 +29,8 @@ export interface HandEvaluation {
   description: string;
 }
 
-// ── Card Parsing ─────────────────────────────────────────────────────────────
-
-const RANK_MAP: Record<string, number> = {
-  "2": 2, "3": 3, "4": 4, "5": 5, "6": 6, "7": 7, "8": 8,
-  "9": 9, "10": 10, "T": 10, "J": 11, "Q": 12, "K": 13, "A": 14,
-};
-
-const SUIT_MAP: Record<string, number> = { h: 0, d: 1, c: 2, s: 3 };
-
-interface ParsedCard { rank: number; suit: number; }
-
-function parseCard(card: string): ParsedCard | null {
-  // Normalise: "Ah" → {rank:14, suit:0}; "10s" → {rank:10, suit:3}
-  const s = card.trim();
-  if (s.length < 2) return null;
-  const suit = SUIT_MAP[s[s.length - 1].toLowerCase()];
-  if (suit === undefined) return null;
-  const rankStr = s.slice(0, -1).toUpperCase();
-  const rank = RANK_MAP[rankStr];
-  if (rank === undefined) return null;
-  return { rank, suit };
-}
+// ── Card Parsing — delegated to equity/card.ts ────────────────────────────────
+// parseCard and ParsedCard (= Card) are imported at the top of the file.
 
 // ── Pre-allocated counters (avoids GC pressure in hot path) ─────────────────
 
@@ -56,6 +38,13 @@ const _rankCounts = new Uint8Array(15); // index 2-14
 const _suitCounts = new Uint8Array(4);  // h/d/c/s
 
 // ── Draw Detection ───────────────────────────────────────────────────────────
+//
+// TODO: align flushOutCount / straightOutCount with lib/poker/equity/outs.ts.
+// They cannot be directly replaced yet: straightOutCount here returns a plain
+// number (max outs for a single-street draw), while countStraightOuts in
+// outs.ts returns { oesd, gutshot } for equity calculations. The calling
+// code in _classify() uses the combined number directly, so merging requires
+// updating the call sites too.
 
 /** Count outs for flush draw. Returns number of remaining suited cards to complete. */
 function flushOutCount(cards: ParsedCard[]): number {
@@ -140,9 +129,9 @@ export function evaluateHand(
   const cached = _evalCache.get(cacheKey);
   if (cached) return cached;
 
-  const allParsed = [...heroCards, ...communityCards].map(parseCard).filter(Boolean) as ParsedCard[];
-  const heroParsed = heroCards.map(parseCard).filter(Boolean) as ParsedCard[];
-  const boardParsed = communityCards.map(parseCard).filter(Boolean) as ParsedCard[];
+  const allParsed = [...heroCards, ...communityCards].map(parseCard).filter((c): c is ParsedCard => c !== null);
+  const heroParsed = heroCards.map(parseCard).filter((c): c is ParsedCard => c !== null);
+  const boardParsed = communityCards.map(parseCard).filter((c): c is ParsedCard => c !== null);
 
   const result = _classify(allParsed, heroParsed, boardParsed);
   _evalCache.set(cacheKey, result);

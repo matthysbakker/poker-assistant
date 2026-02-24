@@ -1,16 +1,8 @@
-import { mkdir, writeFile } from "fs/promises";
+import { mkdir, readdir, readFile, writeFile } from "fs/promises";
 import { join } from "path";
 import type { HandAnalysis } from "@/lib/ai/schema";
-import type { CardMatch, DetectionResult, Position } from "@/lib/card-detection/types";
+import type { Position } from "@/lib/card-detection/types";
 import type { TableTemperature } from "@/lib/poker/table-temperature";
-
-export interface DetectionDetail {
-  card: string;
-  group: "hero" | "community";
-  confidence: "HIGH" | "MEDIUM" | "LOW" | "NONE";
-  matchScore: number;
-  gap: number;
-}
 
 export interface HandRecord {
   id: string;
@@ -24,7 +16,10 @@ export interface HandRecord {
   // What the AI saw (inputs)
   screenshotFile: string;
   detectedText: string | null;
-  detectionDetails: DetectionDetail[];
+  /** Raw card detection matches for hero cards. Null when detection was skipped. */
+  heroCardMatches: Array<{ card: string; confidence: string }> | null;
+  /** Raw card detection matches for community cards. Null when detection was skipped. */
+  communityCardMatches: Array<{ card: string; confidence: string }> | null;
   handContext: string | null;
   opponentHistory:
     | Record<
@@ -55,32 +50,96 @@ export interface HandRecord {
   analysis: HandAnalysis;
 }
 
-function mapMatchToDetail(
-  match: CardMatch,
-  group: "hero" | "community",
-): DetectionDetail {
-  return {
-    card: match.card ?? "unknown",
-    group,
-    confidence: match.confidence,
-    matchScore: match.matchScore,
-    gap: match.gap,
-  };
+/**
+ * Lists hand record files from data/hands/. Returns records sorted newest-first.
+ * @param options.date - Filter by date string YYYY-MM-DD (optional)
+ * @param options.limit - Max records to return (default 20, max 100)
+ * @param options.offset - Skip first N records (for pagination)
+ */
+export async function readHandRecords(
+  options: {
+    date?: string;
+    limit?: number;
+    offset?: number;
+  } = {},
+): Promise<HandRecord[]> {
+  const { date, limit = 20, offset = 0 } = options;
+  const clampedLimit = Math.min(limit, 100);
+  const baseDir = join(process.cwd(), "data/hands");
+
+  try {
+    // Get date directories, sorted newest-first
+    let dates: string[];
+    if (date) {
+      dates = [date];
+    } else {
+      const entries = await readdir(baseDir, { withFileTypes: true });
+      dates = entries
+        .filter(
+          (e) => e.isDirectory() && /^\d{4}-\d{2}-\d{2}$/.test(e.name),
+        )
+        .map((e) => e.name)
+        .sort()
+        .reverse();
+    }
+
+    const records: HandRecord[] = [];
+
+    for (const d of dates) {
+      if (records.length >= clampedLimit + offset) break;
+      const dirPath = join(baseDir, d);
+      try {
+        const files = await readdir(dirPath);
+        const jsonFiles = files
+          .filter((f) => f.endsWith(".json"))
+          .sort()
+          .reverse();
+
+        for (const file of jsonFiles) {
+          if (records.length >= clampedLimit + offset) break;
+          try {
+            const content = await readFile(join(dirPath, file), "utf-8");
+            const record = JSON.parse(content) as HandRecord;
+            records.push(record);
+          } catch {
+            // Skip malformed records
+          }
+        }
+      } catch {
+        // Skip inaccessible date directories
+      }
+    }
+
+    return records.slice(offset, offset + clampedLimit);
+  } catch {
+    // data/hands/ doesn't exist yet
+    return [];
+  }
 }
 
-export function buildDetectionDetails(
-  detection: DetectionResult | null,
-): DetectionDetail[] {
-  if (!detection) return [];
+/**
+ * Reads a single hand record by ID. Searches across all date directories.
+ */
+export async function readHandRecord(id: string): Promise<HandRecord | null> {
+  // Validate ID to prevent path traversal
+  if (!/^[a-f0-9-]{36}$/.test(id)) return null;
+  const baseDir = join(process.cwd(), "data/hands");
 
-  const details: DetectionDetail[] = [];
-  for (const match of detection.heroCards) {
-    details.push(mapMatchToDetail(match, "hero"));
+  try {
+    const dates = await readdir(baseDir, { withFileTypes: true });
+    for (const d of dates.filter((e) => e.isDirectory())) {
+      const filePath = join(baseDir, d.name, `${id}.json`);
+      try {
+        const content = await readFile(filePath, "utf-8");
+        return JSON.parse(content) as HandRecord;
+      } catch {
+        // Not in this date directory
+      }
+    }
+  } catch {
+    // data/hands/ doesn't exist
   }
-  for (const match of detection.communityCards) {
-    details.push(mapMatchToDetail(match, "community"));
-  }
-  return details;
+  return null;
 }
 
 export async function writeHandRecord(

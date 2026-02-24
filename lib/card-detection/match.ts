@@ -54,7 +54,7 @@ export async function cropCorner(
   imageBuffer: Buffer,
   card: LocatedCard,
 ): Promise<Buffer> {
-  return sharp(imageBuffer)
+  return sharp(imageBuffer, { limitInputPixels: 25_000_000 })
     .extract({
       left: card.corner.x,
       top: card.corner.y,
