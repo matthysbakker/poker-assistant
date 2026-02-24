@@ -364,7 +364,10 @@ function scrapeAvailableActions(): ActionOption[] {
   if (!actionsArea) return actions;
 
   actionsArea.querySelectorAll(".base-button").forEach((btn) => {
-    const text = btn.textContent?.trim() || "";
+    // Playtech renders dual spans per button (visual + aria label) so textContent gives "FoldFold".
+    // Use the first span's text; fall back to full textContent if no span found.
+    const firstSpan = btn.querySelector("span");
+    const text = firstSpan?.textContent?.trim() || btn.textContent?.trim() || "";
     if (!text) return;
 
     const lowerText = text.toLowerCase();
@@ -1110,21 +1113,28 @@ function updateOverlay(state: GameState) {
   const webAdviceExtra = !isPreflop && lastClaudeAdvice?.boardTexture
     ? ` | ${escapeHtml(lastClaudeAdvice.boardTexture)}${lastClaudeAdvice.spr ? ` | SPR ${escapeHtml(lastClaudeAdvice.spr)}` : ""}`
     : "";
-  const monAdviceRec = !webAdviceRec && monitorAdvice
+  // Distinguish real autopilot advice from error fallbacks ("Auto-fold: ...")
+  const isMonitorError = !!monitorAdvice && monitorAdvice.reasoning.startsWith("Auto-fold:");
+  const monAdviceRec = !webAdviceRec && monitorAdvice && !isMonitorError
     ? monitorAdvice.action + (monitorAdvice.amount != null ? ` €${monitorAdvice.amount.toFixed(2)}` : "")
     : null;
   const adviceRec = webAdviceRec ?? monAdviceRec;
   const adviceExtra = webAdviceRec ? webAdviceExtra : "";
-  const adviceReasoning = !webAdviceRec && monitorAdvice?.reasoning
+  const adviceReasoning = !webAdviceRec && monitorAdvice?.reasoning && !isMonitorError
     ? ` — ${escapeHtml(monitorAdvice.reasoning.slice(0, 80))}${monitorAdvice.reasoning.length > 80 ? "…" : ""}`
     : "";
+  const errorMsg = isMonitorError
+    ? monitorAdvice!.reasoning.replace("Auto-fold: ", "")
+    : null;
   const claudeHtml = adviceRec
     ? `<div style="border-top:1px solid #3f3f46;margin-top:6px;padding-top:6px">
          <span style="color:#71717a">AI: </span>
          <span style="color:#4ade80;font-weight:bold">${escapeHtml(adviceRec)}</span>
-         <span style="color:#52525b">${adviceExtra}${adviceReasoning}</span>
+         <span style="color:#9ca3af">${adviceExtra}${adviceReasoning}</span>
        </div>`
-    : "";
+    : errorMsg
+      ? `<div style="border-top:1px solid #3f3f46;margin-top:6px;padding-top:6px;color:#f97316">⚠ ${escapeHtml(errorMsg)}</div>`
+      : "";
 
   el.innerHTML = `
     <div style="color:${modeColor};font-weight:bold;margin-bottom:4px">${modeLabel}</div>
