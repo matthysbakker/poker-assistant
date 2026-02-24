@@ -87,6 +87,7 @@ interface ClaudeAdvice {
 
 let autopilotMode: "off" | "monitor" | "play" = "off";
 let lastPersonaRec: PersonaRec | null = null;
+let lastTableTemperature: { dominantType: TableTemperatureLocal; handsObserved: number } | null = null;
 
 // ── Local Engine Config ─────────────────────────────────────────────────
 
@@ -508,6 +509,20 @@ function deriveTemperatureFromDomStats(
   return isAggressive === false ? "loose_passive" : "loose_aggressive";
 }
 
+/** Maps table temperature dominantType → exploit engine opponent type string. */
+function opponentTypeFromTemperature(
+  temp: { dominantType: TableTemperatureLocal; handsObserved: number } | null,
+): string | undefined {
+  if (!temp) return undefined;
+  const map: Partial<Record<TableTemperatureLocal, string>> = {
+    loose_passive:    "LOOSE_PASSIVE",
+    tight_passive:    "TIGHT_PASSIVE",
+    loose_aggressive: "LOOSE_AGGRESSIVE",
+    tight_aggressive: "TIGHT_AGGRESSIVE",
+  };
+  return map[temp.dominantType];
+}
+
 function scrapeGameState(): GameState {
   // Pure read — no DOM mutations here (todo 032 / CQS principle)
   return {
@@ -650,6 +665,13 @@ async function requestPersona(heroCards: string[], position: string) {
     console.log("[Poker] Table temperature from DOM stats:", domTemperature);
   }
 
+  // Persist temperature for the exploit layer — use VPIP player count as sample proxy
+  const withVpip = tableStats.filter((s) => s.seat !== heroSeat && s.vpip !== null);
+  lastTableTemperature = {
+    dominantType: domTemperature,
+    handsObserved: withVpip.length >= 3 ? 30 : withVpip.length >= 2 ? 15 : withVpip.length >= 1 ? 6 : 0,
+  };
+
   try {
     const res = await fetch(PERSONA_API_URL, {
       method: "POST",
@@ -709,10 +731,10 @@ function localDecide(state: GameState): LocalDecision | null {
 
   const pot = parseCurrency(state.pot);
 
-  // Infer opponent type from session data (best-effort, extension can't access sessionStorage)
-  // For now, use dominant type if available via lastPersonaRec temperature context
-  // (Full opponent modelling from session data requires a postMessage bridge — Phase 4 extension)
-  const opponentType: string | undefined = undefined;
+  // Infer opponent type from table temperature (aggregate VPIP/AF from DOM).
+  // Per-seat wiring deferred until CLAUDE_ADVICE → opponentTypes bridge is in place.
+  const opponentType = opponentTypeFromTemperature(lastTableTemperature);
+  const handsObserved = lastTableTemperature?.handsObserved ?? 0;
 
   try {
     return applyRuleTree({
@@ -726,6 +748,7 @@ function localDecide(state: GameState): LocalDecision | null {
       position,
       activePlayers: activePlayers.length,
       opponentType,
+      handsObserved,
     });
   } catch (err) {
     console.error("[Poker] localDecide() threw:", err);

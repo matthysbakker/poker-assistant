@@ -12,6 +12,7 @@
 
 import { evaluateHand, type HandTier } from "./hand-evaluator";
 import { analyzeBoard, betFractionFromWetScore } from "./board-analyzer";
+import { applyExploitAdjustments } from "./exploit";
 import {
   parseCards,
   analyzeOuts,
@@ -43,6 +44,7 @@ export interface RuleTreeInput {
   position: string;            // "BTN"|"SB"|"BB"|"UTG"|"MP"|"CO"|"??"
   activePlayers: number;       // number of players still in hand (2 = heads-up)
   opponentType?: string;       // inferred type from session (e.g. "LOOSE_PASSIVE")
+  handsObserved?: number;      // sample size for opponent model — scales exploit confidence
 }
 
 // ── SPR ──────────────────────────────────────────────────────────────────────
@@ -63,35 +65,14 @@ function betSize(pot: number, fraction: number): number {
   return Math.round(pot * fraction * 100) / 100;
 }
 
-// ── Opponent exploit post-processing ──────────────────────────────────────────
+// ── Board high-card detection (for AP-2 scare-card bluff) ─────────────────────
 
-/**
- * Adjust a base decision based on inferred opponent type.
- * Confidence is preserved (opponent model is a post-processing bonus, not a primary signal).
- */
-function applyOpponentAdjustment(
-  decision: LocalDecision,
-  opponentType: string | undefined,
-): LocalDecision {
-  if (!opponentType) return decision;
-
-  const type = opponentType.toUpperCase();
-
-  // Against tight-passive (nit): increase aggression — they fold too much
-  if (type === "TIGHT_PASSIVE") {
-    if (decision.action === "CALL") {
-      return { ...decision, action: "RAISE", reasoning: decision.reasoning + " [exploit: tight-passive folds to raises]" };
-    }
-  }
-
-  // Against loose-passive (calling station): never bluff, value-bet more
-  if (type === "LOOSE_PASSIVE") {
-    if (decision.action === "FOLD" && !decision.reasoning.includes("dominated")) {
-      return { ...decision, action: "CHECK", reasoning: decision.reasoning + " [exploit: calling station, don't fold draws cheap]" };
-    }
-  }
-
-  return decision;
+/** Returns true if the board has an A, K, or Q — high-card texture that nits fear. */
+function boardHasHighCard(communityCards: string[]): boolean {
+  return communityCards.some((c) => {
+    const rank = c.slice(0, -1).toUpperCase();
+    return rank === "A" || rank === "K" || rank === "Q";
+  });
 }
 
 // ── Main Rule Tree ─────────────────────────────────────────────────────────────
@@ -104,6 +85,7 @@ export function applyRuleTree(input: RuleTreeInput): LocalDecision {
   const {
     heroCards, communityCards, pot, effectiveStack,
     callAmount, facingBet, position, activePlayers, opponentType,
+    handsObserved = 0,
   } = input;
 
   // Need at least the flop to make post-flop decisions
@@ -279,6 +261,15 @@ export function applyRuleTree(input: RuleTreeInput): LocalDecision {
   }
 
   // ── Opponent exploit post-processing ──────────────────────────────────────
-  const final = applyOpponentAdjustment(decision, opponentType);
-  return final;
+  const highCardOrWetBoard = boardHasHighCard(communityCards) || board.wetScore >= 2;
+  return applyExploitAdjustments(
+    decision,
+    opponentType,
+    handsObserved,
+    hand,
+    facingBet,
+    pot,
+    callAmount,
+    highCardOrWetBoard,
+  );
 }
