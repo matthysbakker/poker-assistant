@@ -151,7 +151,8 @@ export function applyRuleTree(input: RuleTreeInput): LocalDecision {
   // ── STRONG TIER ─────────────────────────────────────────────────────────
   else if (hand.tier === "strong") {
     if (spr < 3) {
-      decision = { action: facingBet ? "CALL" : "BET", amount: null, confidence: 0.88, reasoning: `Strong hand, low SPR (${spr.toFixed(1)}) — commit` };
+      const commitAmt = facingBet ? null : Math.min(effectiveStack, betSize(pot, 1.0));
+      decision = { action: facingBet ? "CALL" : "BET", amount: commitAmt, confidence: 0.88, reasoning: `Strong hand, low SPR (${spr.toFixed(1)}) — commit` };
     } else if (facingBet) {
       decision = { action: "CALL", amount: null, confidence: 0.85, reasoning: "Strong hand, calling 1 bet" };
     } else {
@@ -162,7 +163,8 @@ export function applyRuleTree(input: RuleTreeInput): LocalDecision {
   // ── TOP PAIR / GOOD KICKER or OVERPAIR ──────────────────────────────────
   else if (hand.tier === "top_pair_gk") {
     if (spr < 3) {
-      decision = { action: facingBet ? "CALL" : "BET", amount: null, confidence: 0.85, reasoning: `TPTK/overpair, commit zone (SPR ${spr.toFixed(1)})` };
+      const commitAmt = facingBet ? null : Math.min(effectiveStack, betSize(pot, 0.75));
+      decision = { action: facingBet ? "CALL" : "BET", amount: commitAmt, confidence: 0.85, reasoning: `TPTK/overpair, commit zone (SPR ${spr.toFixed(1)})` };
     } else if (mismatch.dominated) {
       return { action: "FOLD", amount: null, confidence: 0.72, reasoning: `TPTK may be dominated: ${mismatch.reason}` };
     } else if (facingBet) {
@@ -265,4 +267,90 @@ export function applyRuleTree(input: RuleTreeInput): LocalDecision {
     callAmount,
     highCardOrWetBoard,
   );
+}
+
+// ── Multi-persona post-flop ────────────────────────────────────────────────────
+
+export interface PersonaPostflopDecision {
+  name: string;
+  action: LocalDecision["action"];
+  amount: number | null;
+  reasoning: string;
+}
+
+function applyTagAdjust(base: LocalDecision, tier: HandTier): LocalDecision {
+  // Fold medium pairs facing bets — GTO calls, TAG folds
+  if (base.action === "CALL" && tier === "medium") {
+    return { ...base, action: "FOLD", confidence: 0.72, reasoning: base.reasoning + " [TAG]" };
+  }
+  // Smaller sizing (−15%)
+  if ((base.action === "BET" || base.action === "RAISE") && base.amount != null) {
+    return { ...base, amount: Math.round(base.amount * 0.85 * 100) / 100 };
+  }
+  return base;
+}
+
+function applyLagAdjust(
+  base: LocalDecision,
+  input: RuleTreeInput,
+  inPosition: boolean,
+  tier: HandTier,
+): LocalDecision {
+  // Larger sizing (+25%)
+  if ((base.action === "BET" || base.action === "RAISE") && base.amount != null) {
+    return { ...base, amount: Math.round(base.amount * 1.25 * 100) / 100 };
+  }
+  // Probe-bet positional checks with non-air, non-river
+  if (
+    base.action === "CHECK" &&
+    !input.facingBet &&
+    inPosition &&
+    input.communityCards.length < 5 &&
+    tier !== "air"
+  ) {
+    const amount = Math.round(input.pot * 0.40 * 100) / 100;
+    return {
+      ...base,
+      action: "BET",
+      amount,
+      confidence: Math.max(0.55, base.confidence - 0.08),
+      reasoning: base.reasoning + " [LAG: probe]",
+    };
+  }
+  return base;
+}
+
+/**
+ * Run the post-flop rule tree for all 4 personas in one pass.
+ * GTO is the shared base; TAG/LAG/Exploit are derived adjustments.
+ */
+export function applyRuleTreeAllPersonas(input: RuleTreeInput): PersonaPostflopDecision[] {
+  // GTO base — no exploit layer
+  const gto = applyRuleTree({ ...input, opponentType: undefined });
+
+  // Shared context for adjustments (caches avoid re-computation)
+  const hand = evaluateHand(input.heroCards, input.communityCards);
+  const board = analyzeBoard(input.communityCards);
+  const inPosition = ["BTN", "CO", "BTN/SB"].includes(input.position.toUpperCase());
+  const highCardOrWetBoard = board.highCards || board.wetScore >= 2;
+
+  const tag = applyTagAdjust(gto, hand.tier);
+  const lag = applyLagAdjust(gto, input, inPosition, hand.tier);
+  const exploit = applyExploitAdjustments(
+    gto,
+    input.opponentType,
+    input.handsObserved ?? 0,
+    hand,
+    input.facingBet,
+    input.pot,
+    input.callAmount,
+    highCardOrWetBoard,
+  );
+
+  return [
+    { name: "GTO Grinder",  action: gto.action,    amount: gto.amount,    reasoning: gto.reasoning },
+    { name: "TAG Shark",    action: tag.action,    amount: tag.amount,    reasoning: tag.reasoning },
+    { name: "LAG Assassin", action: lag.action,    amount: lag.amount,    reasoning: lag.reasoning },
+    { name: "Exploit Hawk", action: exploit.action, amount: exploit.amount, reasoning: exploit.reasoning },
+  ];
 }

@@ -15,8 +15,9 @@
  *   AUTOPILOT_MODE        bg → poker-content   Apply mode change ("off"|"monitor"|"play")
  */
 
-import { applyRuleTree } from "../../lib/poker/rule-tree";
-import { facingRaiseDecision } from "../../lib/poker/facing-raise";
+import { applyRuleTree, applyRuleTreeAllPersonas, type PersonaPostflopDecision } from "../../lib/poker/rule-tree";
+import { facingRaiseDecision, facing3BetDecision, facingLimpDecision } from "../../lib/poker/facing-raise";
+import { rfiDecision } from "../../lib/poker/rfi-fallback";
 import { clearEvalCache } from "../../lib/poker/hand-evaluator";
 import { clearBoardCache } from "../../lib/poker/board-analyzer";
 import { parseCurrency } from "../../lib/poker/equity/pot-odds";
@@ -103,6 +104,8 @@ let preflopFastPathFired = false; // true once persona chart fires preflop — d
 
 let lastClaudeAdvice: ClaudeAdvice | null = null;
 let monitorAdvice: AutopilotAction | null = null;
+let allPostflopDecisions: PersonaPostflopDecision[] | null = null;
+let pendingPlayAction: AutopilotAction | null = null; // shown in overlay while humanDelay runs
 let executing = false;
 let currentHandId: string | null = null;
 let handMessages: Array<{ role: "user" | "assistant"; content: string }> = [];
@@ -789,6 +792,47 @@ function localDecide(state: GameState): LocalDecision | null {
   }
 }
 
+/** Same context extraction as localDecide, but returns all 4 persona decisions. */
+function localDecideAllPersonas(state: GameState): PersonaPostflopDecision[] | null {
+  if (state.communityCards.length < 3 || state.heroCards.length === 0) return null;
+
+  const temperature = lastTableTemperature ?? { dominantType: "unknown" as TableTemperatureLocal, handsObserved: 0 };
+  const heroPlayer = state.players.find((p) => p.seat === state.heroSeat);
+  if (!heroPlayer) return null;
+
+  const heroStack = parseCurrency(heroPlayer.stack);
+  const activePlayers = state.players.filter((p) => p.name && !p.folded && p.hasCards);
+  const opponents = activePlayers.filter((p) => p.seat !== state.heroSeat);
+  const opponentStacks = opponents.map((p) => parseCurrency(p.stack)).filter((s) => s > 0);
+  const minOpponentStack = opponentStacks.length > 0 ? Math.min(...opponentStacks) : heroStack;
+  const effectiveStack = Math.min(heroStack, minOpponentStack);
+
+  const callAction = state.availableActions.find((a) => a.type === "CALL");
+  const callAmount = parseCurrency(callAction?.amount);
+  const facingBet = callAmount > 0;
+
+  const rawPosition = getPosition(state.heroSeat, state.dealerSeat, activePlayers.length);
+  const position = rawPosition === "BTN/SB" ? "BTN" : rawPosition;
+  const pot = parseCurrency(state.pot);
+
+  const opponentType = TEMPERATURE_TO_OPPONENT_TYPE[temperature.dominantType];
+  const handsObserved = temperature.handsObserved;
+
+  return applyRuleTreeAllPersonas({
+    heroCards: state.heroCards,
+    communityCards: state.communityCards,
+    pot,
+    heroStack,
+    effectiveStack,
+    callAmount,
+    facingBet,
+    position,
+    activePlayers: activePlayers.length,
+    opponentType,
+    handsObserved,
+  });
+}
+
 // ── Decision Request ───────────────────────────────────────────────────
 
 /** Brief post-flop style guidance per persona, prepended to every hand. */
@@ -891,6 +935,34 @@ function simulateClick(element: Element) {
   return true;
 }
 
+/** Find the bet/raise amount input using all known Playtech selector variants. */
+function findBetInput(): HTMLInputElement | null {
+  return (
+    document.querySelector<HTMLInputElement>(".betInput") ??
+    document.querySelector<HTMLInputElement>("[data-bet-input]") ??
+    document.querySelector<HTMLInputElement>(".actions-area input[type='number']") ??
+    document.querySelector<HTMLInputElement>(".actions-area input[type='text']") ??
+    document.querySelector<HTMLInputElement>("[class*='raise'] input") ??
+    document.querySelector<HTMLInputElement>("[class*='bet-amount'] input")
+  );
+}
+
+/**
+ * Set a controlled input's value in a way that works with React/Vue event systems.
+ * Uses the native HTMLInputElement setter so React's synthetic event system picks it up.
+ */
+function setBetInputValue(input: HTMLInputElement, value: number): void {
+  const nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+  const str = value.toFixed(2);
+  if (nativeSetter) {
+    nativeSetter.call(input, str);
+  } else {
+    input.value = str;
+  }
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+  input.dispatchEvent(new Event("change", { bubbles: true }));
+}
+
 function findActionButton(actionType: string): Element | null {
   // Returns the Element directly so the reference survives async delays (todo 036)
   const actionsArea = document.querySelector(".actions-area");
@@ -922,15 +994,12 @@ async function executeAction(decision: AutopilotAction) {
   // try/finally guarantees executing is always cleared, even if an unexpected
   // exception is thrown (todo 060)
   try {
-    // RAISE/BET: bet-input not yet implemented — fall back to CALL/CHECK to avoid
-    // executing at the wrong default size (todo 030)
     if (decision.action === "RAISE" || decision.action === "BET") {
-      console.warn(
-        `[Poker] ${decision.action} €${decision.amount ?? "?"} requested but bet-input entry not yet implemented — falling back to avoid wrong-sized bet`,
-      );
-      button = findActionButton("CALL") ?? findActionButton("CHECK") ?? findActionButton("FOLD");
-      if (button) {
-        console.log("[Poker] RAISE/BET fallback: clicked", button.textContent?.trim());
+      // Find the raise/bet button — if absent (only fold+call available) fall back
+      button = findActionButton(decision.action);
+      if (!button) {
+        console.warn(`[Poker] ${decision.action} button not found — falling back to CALL/CHECK`);
+        button = findActionButton("CALL") ?? findActionButton("CHECK") ?? findActionButton("FOLD");
       }
     } else {
       button = findActionButton(decision.action);
@@ -952,6 +1021,13 @@ async function executeAction(decision: AutopilotAction) {
       return;
     }
 
+    // Show pending action in overlay BEFORE the humanDelay so the user can see
+    // exactly what is about to be executed (amount, action type, pot context).
+    if (autopilotMode === "play") {
+      pendingPlayAction = decision;
+      if (lastState) updateOverlay(lastState);
+    }
+
     // Dynamic humanization delay based on remaining timer
     if (timer !== null && timer <= 3) {
       console.log("[Poker] Timer critical, clicking immediately");
@@ -967,41 +1043,52 @@ async function executeAction(decision: AutopilotAction) {
     // Re-check element is still connected after async delay (todo 036)
     if (!button.isConnected) {
       console.warn("[Poker] Button detached during delay — refinding");
-      button = findActionButton(decision.action === "RAISE" || decision.action === "BET"
-        ? "CALL"
-        : decision.action);
+      button = findActionButton(decision.action);
       if (!button) {
         console.error("[Poker] Button lost after delay, aborting");
         return;
       }
     }
 
-    // For RAISE/BET: re-validate that the bet input is still present and the amount
-    // is within the allowed range — pot/blinds can change during the humanisation delay.
-    // The input may not yet be rendered (Playtech animates buttons); retry up to 3×100ms.
-    if ((decision.action === "RAISE" || decision.action === "BET") && decision.amount !== null) {
-      let betInput = document.querySelector<HTMLInputElement>(".betInput, [data-bet-input]");
+    // For RAISE/BET: must set bet input to the desired amount — no slider fallback.
+    // If the input can't be found or the amount is unknown, abort and let the human act.
+    // The input may not be rendered yet (Playtech animates buttons); retry up to 3×100ms.
+    if (decision.action === "RAISE" || decision.action === "BET") {
+      if (decision.amount === null) {
+        console.warn(`[Poker] ${decision.action} has no amount — requires human input`);
+        return;
+      }
+      let betInput = findBetInput();
       if (!betInput) {
         for (let i = 0; i < 3 && !betInput; i++) {
           await new Promise((r) => setTimeout(r, 100));
-          betInput = document.querySelector<HTMLInputElement>(".betInput, [data-bet-input]");
+          betInput = findBetInput();
         }
       }
-      if (!betInput) {
-        console.warn("[Poker] Bet input absent after retries — aborting raise");
-        return;
-      }
-      const min = parseFloat(betInput.min);
-      const max = parseFloat(betInput.max);
-      if (Number.isFinite(min) && (decision.amount < min || decision.amount > max)) {
-        console.warn(`[Poker] Amount €${decision.amount} out of range [${min}, ${max}] after delay — aborting`);
-        return;
+      if (betInput) {
+        const min = parseFloat(betInput.min || "0");
+        const max = parseFloat(betInput.max || "999999");
+        const clamped = Math.min(
+          Number.isFinite(max) ? max : 999999,
+          Math.max(Number.isFinite(min) ? min : 0, decision.amount),
+        );
+        setBetInputValue(betInput, clamped);
+        console.log(`[Poker] Set bet input: €${clamped.toFixed(2)} (range [${min}, ${max}])`);
+        // Wait for React to re-render the button label with the updated amount
+        await new Promise((r) => setTimeout(r, 150));
+        // Re-find button — label may have changed ("Raise To €0.60" etc.)
+        button = findActionButton(decision.action) ?? button;
+      } else {
+        console.warn(`[Poker] Bet input not found — ${decision.action} €${decision.amount.toFixed(2)} requires human input`);
+        return; // abort; overlay already shows the recommendation
       }
     }
 
     simulateClick(button);
   } finally {
     executing = false;
+    pendingPlayAction = null;
+    if (lastState) updateOverlay(lastState);
   }
 }
 
@@ -1167,6 +1254,14 @@ function updateOverlay(state: GameState) {
   const raiseOpt = state.availableActions.find(a => a.type === "RAISE" || a.type === "BET");
   const preflopRaiseAmt = raiseOpt?.amount ?? null;
 
+  // CHECK is truly free only when CHECK is available AND CALL is not.
+  // If both appear, the pre-action "Check" toggle is active but CALL is the real decision.
+  // Hoisted here so both persona section (post-flop) and AI advice line can share it.
+  const checkFree = state.availableActions.some(a => a.type === "CHECK") &&
+                    !state.availableActions.some(a => a.type === "CALL");
+  // Live call amount for display (e.g. "CALL €1.50") when rule tree returns null amount.
+  const liveCallStr = state.availableActions.find(a => a.type === "CALL")?.amount ?? null;
+
   let personaHtml = "";
   if (lastPersonaRec?.allPersonas.length) {
     if (isPreflop) {
@@ -1176,10 +1271,7 @@ function updateOverlay(state: GameState) {
         : lastPersonaRec.temperature !== "unknown"
           ? lastPersonaRec.temperature.replaceAll("_", "-")
           : "best";
-      // CHECK is truly free only when CHECK is available AND CALL is not.
-      // If both appear, the pre-action "Check" toggle is active but CALL is the real decision.
-      const checkFree = state.availableActions.some(a => a.type === "CHECK") &&
-                        !state.availableActions.some(a => a.type === "CALL");
+      // checkFree is now hoisted above
       const rows = lastPersonaRec.allPersonas.map(p => {
         const isSelected = p.selected;
         // Apply FOLD→CHECK safety override in display too (mirrors safeExecuteAction)
@@ -1195,21 +1287,40 @@ function updateOverlay(state: GameState) {
       }).join("");
       personaHtml = `<div style="border-top:1px solid #3f3f46;margin-top:6px;padding-top:6px">${rows}</div>`;
     } else {
-      // Post-flop: show active persona + the current local-engine recommendation inline
-      const isMonitorErrPost = !!monitorAdvice && monitorAdvice.reasoning.startsWith("Auto-fold:");
-      const postAction = monitorAdvice && !isMonitorErrPost
-        ? monitorAdvice.action + (monitorAdvice.amount != null ? ` €${monitorAdvice.amount.toFixed(2)}` : "")
-        : null;
-      const postActionColor = !postAction ? "#52525b"
-        : (postAction.startsWith("RAISE") || postAction.startsWith("BET")) ? "#4ade80"
-        : postAction.startsWith("CALL") ? "#fbbf24"
-        : postAction.startsWith("FOLD") ? "#ef4444"
-        : "#9ca3af";
-      const postReasoningSnip = monitorAdvice && !isMonitorErrPost && monitorAdvice.reasoning
-        ? ` <span style="color:#52525b;font-size:10px">${escapeHtml(monitorAdvice.reasoning.slice(0, 60))}${monitorAdvice.reasoning.length > 60 ? "…" : ""}</span>`
-        : "";
-      personaHtml = `<div style="border-top:1px solid #3f3f46;margin-top:6px;padding-top:6px;color:#52525b">Playing as: <span style="color:#818cf8;font-weight:bold">${escapeHtml(lastPersonaRec.name)}</span>${postAction ? ` → <span style="color:${postActionColor};font-weight:bold">${escapeHtml(postAction)}</span>${postReasoningSnip}` : " <span style='color:#52525b'>(waiting…)</span>"}</div>`;
+      // Post-flop: show all 4 persona rows (mirrors preflop layout)
+      if (allPostflopDecisions?.length) {
+        const rows = allPostflopDecisions.map(p => {
+          const isSelected = p.name === lastPersonaRec.name;
+          const pfAction = p.action === "FOLD" && checkFree ? "CHECK" : p.action;
+          const amountStr = p.amount != null
+            ? ` €${p.amount.toFixed(2)}`
+            : (pfAction === "CALL" && liveCallStr ? ` ${liveCallStr}` : "");
+          const actionStr = pfAction + amountStr;
+          const actionColor = (pfAction === "RAISE" || pfAction === "BET") ? "#4ade80"
+            : pfAction === "CALL" ? "#fbbf24"
+            : pfAction === "FOLD" ? "#ef4444"
+            : "#9ca3af";
+          const prefix = isSelected ? `<span style="color:#818cf8">★</span>` : `<span style="color:#3f3f46">·</span>`;
+          const nameStyle = isSelected ? "color:#e4e4e7;font-weight:bold" : "color:#52525b";
+          const reasonSnip = isSelected && p.reasoning
+            ? ` <span style="color:#3f3f46;font-size:10px">${escapeHtml(p.reasoning.slice(0, 50))}${p.reasoning.length > 50 ? "…" : ""}</span>`
+            : "";
+          return `<div>${prefix} <span style="${nameStyle}">${escapeHtml(p.name)}</span> → <span style="color:${actionColor};font-weight:${isSelected ? "bold" : "normal"}">${escapeHtml(actionStr)}</span>${reasonSnip}</div>`;
+        }).join("");
+        personaHtml = `<div style="border-top:1px solid #3f3f46;margin-top:6px;padding-top:6px">${rows}</div>`;
+      } else {
+        personaHtml = `<div style="border-top:1px solid #3f3f46;margin-top:6px;padding-top:6px;color:#52525b">Playing as: <span style="color:#818cf8;font-weight:bold">${escapeHtml(lastPersonaRec.name)}</span> <span style='color:#52525b'>(waiting…)</span></div>`;
+      }
     }
+  } else if (!isPreflop && allPostflopDecisions?.length) {
+    // Post-flop without a loaded persona — still show all 4 rows, no ★
+    const rows = allPostflopDecisions.map(p => {
+      const pfAction = p.action === "FOLD" && checkFree ? "CHECK" : p.action;
+      const amountStr = p.amount != null ? ` €${p.amount.toFixed(2)}` : (pfAction === "CALL" && liveCallStr ? ` ${liveCallStr}` : "");
+      const actionColor = (pfAction === "RAISE" || pfAction === "BET") ? "#4ade80" : pfAction === "CALL" ? "#fbbf24" : pfAction === "FOLD" ? "#ef4444" : "#9ca3af";
+      return `<div><span style="color:#3f3f46">·</span> <span style="color:#52525b">${escapeHtml(p.name)}</span> → <span style="color:${actionColor}">${escapeHtml(pfAction + amountStr)}</span></div>`;
+    }).join("");
+    personaHtml = `<div style="border-top:1px solid #3f3f46;margin-top:6px;padding-top:6px">${rows}</div>`;
   } else if (isPreflop && state.heroCards.length > 0) {
     personaHtml = `<div style="border-top:1px solid #3f3f46;margin-top:6px;padding-top:6px;color:#52525b">Personas loading…</div>`;
   }
@@ -1226,8 +1337,17 @@ function updateOverlay(state: GameState) {
     : "";
   // Distinguish real autopilot advice from error fallbacks ("Auto-fold: ...")
   const isMonitorError = !!monitorAdvice && monitorAdvice.reasoning.startsWith("Auto-fold:");
+  // Apply FOLD→CHECK override at display time — covers the race where buttons hadn't
+  // rendered when safeExecuteAction ran (the DOM guard fires on stale button list).
+  const monitorActionDisplay = monitorAdvice && monitorAdvice.action === "FOLD" && checkFree
+    ? "CHECK"
+    : monitorAdvice?.action;
   const monAdviceRec = monitorAdvice && !isMonitorError
-    ? monitorAdvice.action + (monitorAdvice.amount != null ? ` €${monitorAdvice.amount.toFixed(2)}` : "")
+    ? monitorActionDisplay + (
+        monitorAdvice.amount != null
+          ? ` €${monitorAdvice.amount.toFixed(2)}`
+          : (monitorAdvice.action === "CALL" && liveCallStr ? ` ${liveCallStr}` : "")
+      )
     : null;
   // In monitor mode: local engine advice first; web-app Claude only as fallback.
   const adviceRec = autopilotMode === "monitor"
@@ -1250,8 +1370,33 @@ function updateOverlay(state: GameState) {
       ? `<div style="border-top:1px solid #3f3f46;margin-top:6px;padding-top:6px;color:#f97316">⚠ ${escapeHtml(errorMsg)}</div>`
       : "";
 
+  // Pending play-mode action banner — shown during humanDelay so user sees exactly
+  // what is about to execute with full amount and pot context before the click.
+  const pot = parseCurrency(state.pot);
+  let pendingHtml = "";
+  if (pendingPlayAction && autopilotMode === "play") {
+    const pa = pendingPlayAction;
+    const paAction = pa.action === "FOLD" && checkFree ? "CHECK" : pa.action;
+    const paAmountStr = pa.amount != null
+      ? ` €${pa.amount.toFixed(2)}`
+      : (paAction === "CALL" && liveCallStr ? ` ${liveCallStr}` : "");
+    const paPotPct = pa.amount != null && pot > 0
+      ? ` (${Math.round(pa.amount / pot * 100)}% pot)`
+      : "";
+    const paColor = (paAction === "RAISE" || paAction === "BET") ? "#4ade80"
+      : paAction === "CALL" ? "#fbbf24"
+      : paAction === "FOLD" ? "#ef4444"
+      : "#9ca3af";
+    pendingHtml = `<div style="background:#1c1917;border:1px solid ${paColor};border-radius:4px;padding:6px 8px;margin-bottom:6px">
+      <span style="color:#71717a;font-size:10px">AUTO ▶ </span>
+      <span style="color:${paColor};font-weight:bold;font-size:14px">${escapeHtml(paAction + paAmountStr)}</span>
+      <span style="color:#52525b;font-size:10px">${escapeHtml(paPotPct)}</span>
+      <div style="color:#52525b;font-size:10px;margin-top:2px">${escapeHtml(pa.reasoning.slice(0, 80))}${pa.reasoning.length > 80 ? "…" : ""}</div>
+    </div>`;
+  }
+
   el.innerHTML = `
-    <div style="color:${modeColor};font-weight:bold;margin-bottom:4px">${modeLabel}</div>
+    ${pendingHtml}<div style="color:${modeColor};font-weight:bold;margin-bottom:4px">${modeLabel}</div>
     <div>Hand: ${escapeHtml(state.handId || "—")}</div>
     <div>Hero: <b>${hero}</b></div>
     <div>Board: ${board}</div>
@@ -1323,6 +1468,20 @@ function processGameState() {
     }
   }
 
+  // Secondary new-hand signal: hero cards changed completely while no board is showing.
+  // Only fires preflop (communityCards empty) to avoid mid-hand detection glitches
+  // triggering a spurious reset during flop/turn/river animation.
+  const prevHeroCards = lastState?.heroCards ?? [];
+  const heroCardsReplaced =
+    state.heroCards.length >= 2 &&
+    prevHeroCards.length >= 2 &&
+    state.communityCards.length === 0 &&   // preflop only — board absent between hands
+    !state.heroCards.every((c) => prevHeroCards.includes(c));
+  if (heroCardsReplaced && state.handId === currentHandId) {
+    console.log("[Poker] New hand detected via card change:", state.heroCards.join(" "), "(handId unchanged)");
+    currentHandId = null; // force the block below to fire
+  }
+
   // Detect new hand — single block (todo 047 — merged duplicate condition)
   if (state.handId && state.handId !== currentHandId) {
     console.log("[Poker] New hand:", state.handId);
@@ -1336,6 +1495,8 @@ function processGameState() {
     cachedDealerSeat = null;       // dealer button may move between hands
     lastClaudeAdvice = null;
     monitorAdvice = null;
+    allPostflopDecisions = null;
+    pendingPlayAction = null;
     preflopFastPathFired = false;
     clearEvalCache();
     clearBoardCache();
@@ -1393,93 +1554,146 @@ function processGameState() {
     }
 
     // Phase 1 — Preflop chart fast-path: skip Claude when we have a clean RFI spot
-    // Guard: preflop only, persona available, and hero is opening (not facing a raise)
+    // Guard: preflop only, hero is opening (not facing a raise)
     const isPreflop = state.communityCards.length === 0;
     const facingRaise = state.availableActions.some(
       (a) => a.type === "CALL" && parseFloat((a.amount ?? "0").replace(/[€$£,]/g, "")) > 0,
     );
-    if (
-      autopilotMode !== "off" &&
-      isPreflop &&
-      lastPersonaRec &&
-      !facingRaise &&
-      state.heroCards.length > 0
-    ) {
-      const personaAction = lastPersonaRec.action.toUpperCase() as AutopilotAction["action"];
-      if (["FOLD", "CALL", "RAISE", "BET", "CHECK"].includes(personaAction)) {
-        executing = true;
-        preflopFastPathFired = true; // prevent stale pre-fetch from overwriting this advice
-        // Compute a strategic raise size from BB rather than reading the DOM slider
-        // (action buttons may not be rendered yet when the fast-path fires).
-        // BB is read from the BB player's posted bet — exact regardless of limpers/antes.
-        // Falls back to pot / 1.5 only when the BB player has no visible bet yet.
-        let preflopAmount: number | null = null;
-        let bb: number | null = null;
-        if (personaAction === "RAISE" || personaAction === "BET") {
-          const activePlayers = state.players.filter((p) => p.name && !p.folded && p.hasCards);
-          const rawPos = getPosition(state.heroSeat, state.dealerSeat, activePlayers.length);
-          const pos = rawPos === "BTN/SB" ? "BTN" : rawPos;
-          // Late position (BTN/CO): open 2.5×BB; early/mid/SB: open 3×BB
-          const multiplier = ["BTN", "CO"].includes(pos) ? 2.5 : 3.0;
-          const bbPlayer = state.players.find(
-            (p) => p.name && getPosition(p.seat, state.dealerSeat, activePlayers.length) === "BB"
-          );
-          const bbFromPlayer = bbPlayer ? parseCurrency(bbPlayer.bet) : 0;
-          if (bbFromPlayer > 0) {
-            bb = bbFromPlayer;
-          } else {
-            const pot = parseCurrency(state.pot);
-            if (pot > 0) {
-              bb = pot / 1.5;
-              console.warn("[Poker] [Preflop] BB player bet not visible — falling back to pot / 1.5");
+    if (autopilotMode !== "off" && isPreflop && !facingRaise && state.heroCards.length > 0) {
+      if (lastPersonaRec) {
+        // Phase 1a — persona recommendation available
+        const personaAction = lastPersonaRec.action.toUpperCase() as AutopilotAction["action"];
+        if (["FOLD", "CALL", "RAISE", "BET", "CHECK"].includes(personaAction)) {
+          executing = true;
+          preflopFastPathFired = true; // prevent stale pre-fetch from overwriting this advice
+          // Compute a strategic raise size from BB rather than reading the DOM slider
+          // (action buttons may not be rendered yet when the fast-path fires).
+          // BB is read from the BB player's posted bet — exact regardless of limpers/antes.
+          // Falls back to pot / 1.5 only when the BB player has no visible bet yet.
+          let preflopAmount: number | null = null;
+          let bb: number | null = null;
+          if (personaAction === "RAISE" || personaAction === "BET") {
+            const activePlayers = state.players.filter((p) => p.name && !p.folded && p.hasCards);
+            const rawPos = getPosition(state.heroSeat, state.dealerSeat, activePlayers.length);
+            const pos = rawPos === "BTN/SB" ? "BTN" : rawPos;
+            // Late position (BTN/CO): open 2.5×BB; early/mid/SB: open 3×BB
+            const multiplier = ["BTN", "CO"].includes(pos) ? 2.5 : 3.0;
+            const bbPlayer = state.players.find(
+              (p) => p.name && getPosition(p.seat, state.dealerSeat, activePlayers.length) === "BB"
+            );
+            const bbFromPlayer = bbPlayer ? parseCurrency(bbPlayer.bet) : 0;
+            if (bbFromPlayer > 0) {
+              bb = bbFromPlayer;
+            } else {
+              // Fallback 1: SB bet × 2 — always a round number, reliable when BB hasn't posted yet
+              const sbPlayer = state.players.find(
+                (p) => p.name && getPosition(p.seat, state.dealerSeat, activePlayers.length) === "SB"
+              );
+              const sbBet = sbPlayer ? parseCurrency(sbPlayer.bet) : 0;
+              if (sbBet > 0) {
+                bb = sbBet * 2;
+                console.warn("[Poker] [Preflop] BB player bet not visible — using SB × 2:", bb);
+              } else {
+                // Fallback 2: scrape table stakes element (e.g. "€1/€2")
+                const stakesEl = document.querySelector(
+                  "[class*='stake'], [class*='blind'], [class*='limit'], .table-title, .game-title, .game-info"
+                );
+                const stakesText = stakesEl?.textContent ?? "";
+                const stakesMatch = stakesText.match(/[€$£]([\d.]+)\s*[/\\]\s*[€$£]([\d.]+)/);
+                if (stakesMatch) {
+                  bb = parseFloat(stakesMatch[2]);
+                  console.warn("[Poker] [Preflop] BB player bet not visible — using stakes DOM:", bb);
+                } else {
+                  console.warn("[Poker] [Preflop] BB unknown — skipping raise sizing");
+                  // bb stays null; preflopAmount will be null; executeAction will abort (amount required for RAISE)
+                }
+              }
+            }
+            if (bb !== null && bb > 0) {
+              preflopAmount = Math.round(bb * multiplier * 100) / 100;
             }
           }
-          if (bb !== null && bb > 0) {
-            preflopAmount = Math.round(bb * multiplier * 100) / 100;
+          const bbTag = preflopAmount != null && bb != null
+            ? ` (${(preflopAmount / bb).toFixed(1)}BB)`
+            : "";
+          const reasoning = `Preflop chart: ${lastPersonaRec.name}${bbTag}`;
+          console.log(`[Poker] [Local/Preflop] ${lastPersonaRec.name} → ${personaAction}${preflopAmount != null ? ` €${preflopAmount.toFixed(2)}${bbTag}` : ""} (confidence 1.0)`);
+          safeExecuteAction(
+            { action: personaAction, amount: preflopAmount, reasoning },
+            "local",
+          );
+
+          // Store preflop fast-path decision as a hand record (fire-and-forget)
+          {
+            const activePlayers = state.players.filter((p) => p.name && !p.folded && p.hasCards);
+            const rawPos = getPosition(state.heroSeat, state.dealerSeat, activePlayers.length);
+            const pos = rawPos === "??" ? "CO" : rawPos === "BTN/SB" ? "BTN" : rawPos;
+            const heroPlayer = state.players.find((p) => p.seat === state.heroSeat);
+            chrome.runtime.sendMessage({
+              type: "PREFLOP_RECORD",
+              payload: {
+                heroCards: state.heroCards,
+                position: pos,
+                potSize: state.pot ?? null,
+                heroStack: heroPlayer?.stack ?? null,
+                action: personaAction,
+                amount: preflopAmount,
+                reasoning,
+                personaName: lastPersonaRec.name,
+                handContext: handMessages[0]?.content ?? null,
+                pokerHandId: state.handId ?? null,
+                tableTemperature: lastTableTemperature ?? null,
+                tableReads: null,
+              },
+            });
+          }
+
+          lastHeroTurn = state.isHeroTurn;
+          lastState = state;
+          return;
+        }
+      } else {
+        // Phase 1b — RFI fallback: persona server unavailable, use inline chart
+        const p1bActivePlayers = state.players.filter((p) => p.name && !p.folded && p.hasCards);
+        const p1bRawPos = getPosition(state.heroSeat, state.dealerSeat, p1bActivePlayers.length);
+        const p1bPos = p1bRawPos === "BTN/SB" ? "BTN" : p1bRawPos === "??" ? "CO" : p1bRawPos;
+        const p1bBbPlayer = state.players.find(
+          (p) => p.name && getPosition(p.seat, state.dealerSeat, p1bActivePlayers.length) === "BB"
+        );
+        let p1bBb = p1bBbPlayer ? parseCurrency(p1bBbPlayer.bet) : 0;
+        if (p1bBb <= 0) {
+          const p1bSbPlayer = state.players.find(
+            (p) => p.name && getPosition(p.seat, state.dealerSeat, p1bActivePlayers.length) === "SB"
+          );
+          const p1bSbBet = p1bSbPlayer ? parseCurrency(p1bSbPlayer.bet) : 0;
+          if (p1bSbBet > 0) {
+            p1bBb = p1bSbBet * 2;
+          } else {
+            const stakesEl = document.querySelector(
+              "[class*='stake'], [class*='blind'], [class*='limit'], .table-title, .game-title, .game-info"
+            );
+            const stakesText = stakesEl?.textContent ?? "";
+            const stakesMatch = stakesText.match(/[€$£]([\d.]+)\s*[/\\]\s*[€$£]([\d.]+)/);
+            if (stakesMatch) p1bBb = parseFloat(stakesMatch[2]);
           }
         }
-        const bbTag = preflopAmount != null && bb != null
-          ? ` (${(preflopAmount / bb).toFixed(1)}BB)`
-          : "";
-        const reasoning = `Preflop chart: ${lastPersonaRec.name}${bbTag}`;
-        console.log(`[Poker] [Local/Preflop] ${lastPersonaRec.name} → ${personaAction}${preflopAmount != null ? ` €${preflopAmount.toFixed(2)}${bbTag}` : ""} (confidence 1.0)`);
-        safeExecuteAction(
-          { action: personaAction, amount: preflopAmount, reasoning },
-          "local",
-        );
-
-        // Store preflop fast-path decision as a hand record (fire-and-forget)
-        {
-          const activePlayers = state.players.filter((p) => p.name && !p.folded && p.hasCards);
-          const rawPos = getPosition(state.heroSeat, state.dealerSeat, activePlayers.length);
-          const pos = rawPos === "??" ? "CO" : rawPos === "BTN/SB" ? "BTN" : rawPos;
-          const heroPlayer = state.players.find((p) => p.seat === state.heroSeat);
-          chrome.runtime.sendMessage({
-            type: "PREFLOP_RECORD",
-            payload: {
-              heroCards: state.heroCards,
-              position: pos,
-              potSize: state.pot ?? null,
-              heroStack: heroPlayer?.stack ?? null,
-              action: personaAction,
-              amount: preflopAmount,
-              reasoning,
-              personaName: lastPersonaRec.name,
-              handContext: handMessages[0]?.content ?? null,
-              pokerHandId: state.handId ?? null,
-              tableTemperature: lastTableTemperature ?? null,
-              tableReads: null,
-            },
-          });
+        const p1bDecision = rfiDecision(state.heroCards, p1bPos, p1bBb);
+        if (p1bDecision) {
+          executing = true;
+          preflopFastPathFired = true;
+          console.log(`[Poker] [Local/Preflop/RFI] ${p1bPos} → ${p1bDecision.action}${p1bDecision.amount != null ? ` €${p1bDecision.amount.toFixed(2)}` : ""} (confidence ${p1bDecision.confidence.toFixed(2)}) — ${p1bDecision.reasoning}`);
+          safeExecuteAction(
+            { action: p1bDecision.action, amount: p1bDecision.amount, reasoning: p1bDecision.reasoning },
+            "local",
+          );
+          lastHeroTurn = state.isHeroTurn;
+          lastState = state;
+          return;
         }
-
-        lastHeroTurn = state.isHeroTurn;
-        lastState = state;
-        return;
       }
     }
 
-    // Phase 2 — Preflop facing-raise: local 3-bet/call/fold chart
+    // Phase 2 — Preflop facing raise/limp/3-bet: local chart routing
     if (autopilotMode !== "off" && isPreflop && facingRaise && state.heroCards.length > 0) {
       const callOpt = state.availableActions.find((a) => a.type === "CALL");
       const frCallAmount = parseCurrency(callOpt?.amount);
@@ -1487,10 +1701,24 @@ function processGameState() {
       const frActivePlayers = state.players.filter((p) => p.name && !p.folded && p.hasCards);
       const frRawPos = getPosition(state.heroSeat, state.dealerSeat, frActivePlayers.length);
       const frPos = frRawPos === "BTN/SB" ? "BTN" : frRawPos === "??" ? "CO" : frRawPos;
-      const frDecision = facingRaiseDecision(state.heroCards, frPos, frCallAmount, frPot);
+
+      // Classify the preflop aggression we're facing:
+      //   Limp:  non-BB, callAmount/pot ≈ 0.40 (1BB into ~2.5BB pot)  → ratio < 0.50
+      //   3-bet: hero already opened (preflopFastPathFired), now faces re-raise
+      //   Raise: standard single open raise (default)
+      const isLimp = frPos !== "BB" && frCallAmount > 0 && frPot > 0 && frCallAmount / frPot < 0.50;
+      const isFacing3Bet = preflopFastPathFired; // hero opened → this is a re-raise
+      const frScenario = isLimp ? "limp" : isFacing3Bet ? "3-bet" : "raise";
+
+      const frDecision = isLimp
+        ? facingLimpDecision(state.heroCards, frPos, frCallAmount, frPot)
+        : isFacing3Bet
+          ? facing3BetDecision(state.heroCards, frPos, frCallAmount, frPot)
+          : facingRaiseDecision(state.heroCards, frPos, frCallAmount, frPot);
+
       if (frDecision) {
         executing = true;
-        console.log(`[Poker] [Local/Preflop] Facing raise: ${frDecision.action} (confidence ${frDecision.confidence.toFixed(2)}) — ${frDecision.reasoning}`);
+        console.log(`[Poker] [Local/Preflop] Facing ${frScenario} from ${frPos}: ${frDecision.action} (confidence ${frDecision.confidence.toFixed(2)}) — ${frDecision.reasoning}`);
         safeExecuteAction(
           { action: frDecision.action, amount: frDecision.amount, reasoning: frDecision.reasoning },
           "local",
@@ -1503,6 +1731,12 @@ function processGameState() {
 
     // Phase 4 — Post-flop local engine fast-path (always used)
     if (autopilotMode !== "off" && state.communityCards.length >= 3) {
+      // Compute all-persona decisions for overlay (fire-and-forget, no blocking)
+      try {
+        allPostflopDecisions = localDecideAllPersonas(state);
+      } catch (_) {
+        allPostflopDecisions = null;
+      }
       const local = localDecide(state);
       if (local) {
         executing = true;
