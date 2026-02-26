@@ -300,6 +300,9 @@ function processInspectorNode(node: Node) {
     ? node.parentElement
     : (node as Element);
 
+  // Exclude our own overlay — its text (CHECK, Fold, Call, etc.) pollutes results.
+  if (startEl?.closest("#poker-monitor-overlay")) return;
+
   recordInspectorHit(text, startEl);
 }
 

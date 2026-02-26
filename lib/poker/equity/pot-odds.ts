@@ -22,6 +22,18 @@ export function computePotOdds(callAmount: number, potBeforeCall: number): numbe
  */
 export function parseCurrency(s: string | null | undefined): number {
   if (!s) return 0;
-  const n = parseFloat(s.replace(/[€$£,]/g, ""));
+  // Strip currency symbols and thousands separators, then normalise decimal comma → dot.
+  // European format: "€28,99" → "28.99"  (comma is the decimal separator)
+  // US format:       "$1,234.56" → "1234.56" (comma is thousands separator)
+  // Heuristic: if the string has a comma but no dot, treat the comma as decimal.
+  let cleaned = s.replace(/[€$£]/g, "").trim();
+  if (cleaned.includes(",") && !cleaned.includes(".")) {
+    // Only a comma present — it's the decimal separator (e.g. "28,99")
+    cleaned = cleaned.replace(",", ".");
+  } else {
+    // Dot present, or no comma — strip commas as thousands separators
+    cleaned = cleaned.replace(/,/g, "");
+  }
+  const n = parseFloat(cleaned);
   return isNaN(n) ? 0 : n;
 }
