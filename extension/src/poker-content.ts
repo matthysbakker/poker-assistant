@@ -688,37 +688,79 @@ interface DomPlayerStat {
   seat: number;
   vpip: number | null;
   af: number | null;
+  /** CSS class suffix from .player-left-wing-color, e.g. "maniac" | "normal" | "tight" */
+  vpipClass: string | null;
+  /** CSS class suffix from .player-right-wing-color, e.g. "passive" | "aggressive" | "normal" */
+  afClass: string | null;
 }
 
 let statDebugLogged = false;
 
-function scrapeTableStats(): DomPlayerStat[] {
+/**
+ * Scrape per-seat HUD stats directly from the poker client's wing elements.
+ *
+ * DOM structure (per .player-area.player-seat-N):
+ *   .player-left-wing-color.hud_vpip_<class>          ← VPIP archetype
+ *   .hud-wings-value-wrapper:not(.right) .hud-wings-value  ← VPIP %
+ *   .player-right-wing-color.hud_aggression_<class>   ← AF archetype
+ *   .hud-wings-value-wrapper.right .hud-wings-value    ← AF %
+ */
+function scrapeHudStats(): DomPlayerStat[] {
   const results: DomPlayerStat[] = [];
   document.querySelectorAll(".player-area").forEach((area) => {
     const seatMatch = area.className.match(/player-seat-(\d+)/);
     if (!seatMatch) return;
     const seat = parseInt(seatMatch[1], 10);
-    const vpip = findStatValue(area, "VPIP");
-    const af = findStatValue(area, "AF");
-    results.push({ seat, vpip, af });
+
+    // VPIP % — left wing value wrapper (no "right" class)
+    const vpipEl = area.querySelector(".hud-wings-value-wrapper:not(.right) .hud-wings-value");
+    const vpipRaw = vpipEl?.textContent?.trim().replace("%", "") ?? "";
+    const vpip = vpipRaw ? parseFloat(vpipRaw) : null;
+
+    // AF % — right wing value wrapper (has "right" class)
+    const afEl = area.querySelector(".hud-wings-value-wrapper.right .hud-wings-value");
+    const afRaw = afEl?.textContent?.trim().replace("%", "") ?? "";
+    const af = afRaw ? parseFloat(afRaw) : null;
+
+    // CSS class archetypes — extract the suffix after "hud_vpip_" / "hud_aggression_"
+    const leftWing = area.querySelector(".player-left-wing-color");
+    const vpipClassMatch = leftWing?.className.match(/hud_vpip_(\w+)/);
+    const vpipClass = vpipClassMatch ? vpipClassMatch[1] : null;
+
+    const rightWing = area.querySelector(".player-right-wing-color");
+    const afClassMatch = rightWing?.className.match(/hud_aggression_(\w+)/);
+    const afClass = afClassMatch ? afClassMatch[1] : null;
+
+    results.push({
+      seat,
+      vpip: vpip !== null && !isNaN(vpip) ? vpip : null,
+      af:   af   !== null && !isNaN(af)   ? af   : null,
+      vpipClass,
+      afClass,
+    });
   });
 
-  // One-time debug log so we can verify / refine selectors
+  // One-time debug log
   if (!statDebugLogged) {
     statDebugLogged = true;
-    const hasAny = results.some((s) => s.vpip !== null || s.af !== null);
+    const hasAny = results.some((s) => s.vpip !== null || s.vpipClass !== null);
     if (hasAny) {
-      console.log("[Poker] DOM stats scraped:", results);
+      console.log("[Poker] HUD stats scraped:", results);
     } else {
       const firstArea = document.querySelector(".player-area");
       console.log(
-        "[Poker] VPIP/AF not found. First .player-area snippet:",
+        "[Poker] HUD stats not found. First .player-area snippet:",
         firstArea?.innerHTML?.slice(0, 600) ?? "(none)",
       );
     }
   }
 
   return results;
+}
+
+/** @deprecated use scrapeHudStats() */
+function scrapeTableStats(): DomPlayerStat[] {
+  return scrapeHudStats();
 }
 
 type TableTemperatureLocal =
@@ -729,32 +771,73 @@ type TableTemperatureLocal =
   | "balanced"
   | "unknown";
 
+// Maps hud_vpip_* CSS class suffix → loose/tight signal (null = use VPIP %)
+const VPIP_CLASS_LOOSE: Record<string, boolean> = {
+  maniac:           true,
+  fish:             true,
+  loose_aggressive: true,
+  loose_passive:    true,
+  loose:            true,
+  tight_aggressive: false,
+  tight_passive:    false,
+  tight:            false,
+  nit:              false,
+  rock:             false,
+};
+
+// Maps hud_aggression_* CSS class suffix → aggressive signal (null = use AF %)
+const AF_CLASS_AGGRESSIVE: Record<string, boolean> = {
+  aggressive: true,
+  maniac:     true,
+  passive:    false,
+  normal:     false, // treat "normal" as not-aggressive for exploit purposes
+};
+
 function deriveTemperatureFromDomStats(
   stats: DomPlayerStat[],
   heroSeat: number,
 ): TableTemperatureLocal {
   const opponents = stats.filter((s) => s.seat !== heroSeat);
+  if (opponents.length === 0) return "unknown";
+
+  // Prefer CSS class signal when available (more reliable than noisy % values)
+  const classSignals = opponents
+    .filter((s) => s.vpipClass !== null)
+    .map((s) => ({
+      loose: VPIP_CLASS_LOOSE[s.vpipClass!] ?? null,
+      aggressive: s.afClass !== null ? (AF_CLASS_AGGRESSIVE[s.afClass!] ?? null) : null,
+    }))
+    .filter((x) => x.loose !== null);
+
+  if (classSignals.length >= 2) {
+    const looseCount = classSignals.filter((x) => x.loose).length;
+    const isLoose = looseCount > classSignals.length / 2;
+    const aggressiveCount = classSignals.filter((x) => x.aggressive === true).length;
+    const passiveCount    = classSignals.filter((x) => x.aggressive === false).length;
+    const isAggressive = aggressiveCount > passiveCount ? true
+                       : passiveCount > aggressiveCount ? false
+                       : null;
+    if (isLoose) return isAggressive === false ? "loose_passive" : "loose_aggressive";
+    return isAggressive ? "tight_aggressive" : "tight_passive";
+  }
+
+  // Fallback: use numeric VPIP/AF percentages
   const withVpip = opponents.filter((s) => s.vpip !== null);
   if (withVpip.length === 0) return "unknown";
 
-  const avgVpip =
-    withVpip.reduce((sum, s) => sum + s.vpip!, 0) / withVpip.length;
-
-  const withAf = opponents.filter((s) => s.af !== null);
-  const avgAf =
-    withAf.length > 0
-      ? withAf.reduce((sum, s) => sum + s.af!, 0) / withAf.length
-      : null;
+  const avgVpip = withVpip.reduce((sum, s) => sum + s.vpip!, 0) / withVpip.length;
+  const withAf  = opponents.filter((s) => s.af !== null);
+  const avgAf   = withAf.length > 0
+    ? withAf.reduce((sum, s) => sum + s.af!, 0) / withAf.length
+    : null;
 
   const isTight = avgVpip < 22;
   const isLoose = avgVpip > 30;
-  const isAggressive = avgAf !== null ? avgAf > 1.5 : null;
+  // AF% in this client appears to be a percentage (not a ratio), so >50% = aggressive
+  const isAggressive = avgAf !== null ? avgAf > 50 : null;
 
   if (!isTight && !isLoose) return "balanced";
-  if (isTight) {
-    return isAggressive === false ? "tight_passive" : "tight_aggressive";
-  }
-  // Loose
+  if (isTight) return isAggressive === false ? "tight_passive" : "tight_aggressive";
   return isAggressive === false ? "loose_passive" : "loose_aggressive";
 }
 
@@ -2189,6 +2272,31 @@ async function pollDebugCommand() {
       result = el ? el.innerHTML.slice(0, 2000) : null;
     } else if (cmd.type === "STATE_DUMP") {
       result = lastState;
+    } else if (cmd.type === "DOM_TEXT_SEARCH" && cmd.text) {
+      // Walk all text nodes and find elements whose textContent contains cmd.text
+      const needle = (cmd.text as string).toLowerCase();
+      const matches: Array<{ tag: string; className: string; id: string; textContent: string; outerHTML: string }> = [];
+      const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+      let node: Node | null;
+      while ((node = walker.nextNode()) && matches.length < 5) {
+        if ((node.textContent ?? "").toLowerCase().includes(needle)) {
+          const el = node.parentElement;
+          if (el && !matches.some(m => m.outerHTML === el.outerHTML.slice(0, 500))) {
+            matches.push({
+              tag: el.tagName.toLowerCase(),
+              className: el.className,
+              id: el.id,
+              textContent: el.textContent?.trim().slice(0, 200) ?? "",
+              outerHTML: el.outerHTML.slice(0, 500),
+            });
+          }
+        }
+      }
+      result = matches;
+    } else if (cmd.type === "DOM_HTML_LONG" && cmd.selector) {
+      // Like DOM_HTML but returns up to 8000 chars
+      const el = document.querySelector(cmd.selector);
+      result = el ? el.innerHTML.slice(0, 8000) : null;
     } else {
       result = { error: `Unknown command type: ${cmd.type}` };
     }
