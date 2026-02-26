@@ -1,10 +1,19 @@
 import type { Opponent } from "@/lib/ai/schema";
 
+export interface StructuredAction {
+  street: "PREFLOP" | "FLOP" | "TURN" | "RIVER";
+  action: "FOLD" | "CHECK" | "CALL" | "RAISE" | "BET";
+  amount?: number;     // in €, undefined for FOLD/CHECK
+  isVpip: boolean;     // preflop: true if CALL or RAISE and not BB check
+  timestamp: number;
+}
+
 export interface OpponentProfile {
   seat: number;
   username?: string;
   handsObserved: number;
-  actions: string[];
+  actions: string[];             // prose strings (kept for display)
+  structuredActions: StructuredAction[]; // machine-parseable action log
   inferredType: string;
   averageStack: string;
 }
@@ -65,6 +74,8 @@ export function updateOpponentProfiles(
       existing.handsObserved += 1;
       existing.inferredType = opp.playerType;
       existing.averageStack = opp.stack;
+      // Initialize structuredActions for profiles loaded from older localStorage
+      if (!existing.structuredActions) existing.structuredActions = [];
       if (opp.username) existing.username = opp.username;
       if (opp.currentAction) {
         existing.actions.push(opp.currentAction);
@@ -79,6 +90,7 @@ export function updateOpponentProfiles(
         username: opp.username,
         handsObserved: 1,
         actions: opp.currentAction ? [opp.currentAction] : [],
+        structuredActions: [],
         inferredType: opp.playerType,
         averageStack: opp.stack,
       };

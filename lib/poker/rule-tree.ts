@@ -23,6 +23,8 @@ import {
   applyDirtyOutsDiscount,
   detectStrengthEquityMismatch,
 } from "./equity";
+import type { VillainRange } from "./villain-range";
+import type { GtoEntry } from "./gto/types";
 
 export interface RuleTreeInput {
   heroCards: string[];         // ["Ah", "Kd"]
@@ -36,6 +38,9 @@ export interface RuleTreeInput {
   activePlayers: number;       // number of players still in hand (2 = heads-up)
   opponentType?: PlayerExploitType; // inferred type from session
   handsObserved?: number;      // sample size for opponent model — scales exploit confidence
+  rangeEquity?: number;        // pre-computed hero equity vs villain range (0–1)
+  villainRange?: VillainRange; // villain range estimate (passed in, not computed here)
+  gtoHint?: GtoEntry | null;   // Phase 3 GTO lookup result (null = miss or not applicable)
 }
 
 // ── SPR ──────────────────────────────────────────────────────────────────────
@@ -94,7 +99,7 @@ export function applyRuleTree(input: RuleTreeInput): LocalDecision {
     activePlayers,
   });
 
-  const rawEquity = exactOutEquity(adjustedOuts, seenCount, streetsLeft);
+  const rawEquity = input.rangeEquity ?? exactOutEquity(adjustedOuts, seenCount, streetsLeft);
   const impliedBonus = impliedOddsBonus(outs.flushOuts, outs.oesd + outs.gutshot, spr);
   const equity = rawEquity + impliedBonus;
   const potOdds = computePotOdds(callAmount, pot);
