@@ -220,11 +220,29 @@ chrome.runtime.onMessage.addListener((message) => {
 // Discovers which DOM selector carries opponent action text (raises/calls/folds).
 // Activated via the popup "Inspect" button → background → this message handler.
 // Results are logged to the browser console on the poker tab.
+//
+// Design notes:
+// - Poker clients often show action toasts that appear and are immediately
+//   removed. The ancestor chain MUST be snapshotted synchronously inside the
+//   MutationObserver callback, before any async tick lets the node detach.
+// - We also capture element-level text (not just leaf text nodes) so that
+//   elements whose textContent is set directly (innerHTML = "…") are caught.
+// - Every match is logged immediately to the console so you can watch live.
 
 const ACTION_RE = /\b(raises?(?:\s+to)?|calls?|folds?|checks?|bets?)\b/i;
-const inspectorHits = new Map<string, { count: number; minDepth: number; examples: string[] }>();
-let inspectorObserver: MutationObserver | null = null;
 
+interface InspectorEntry {
+  count: number;
+  minDepth: number;
+  examples: string[];
+  // Full ancestor path of the best (shortest) match, for CSS path debugging
+  bestPath: string[];
+}
+const inspectorHits = new Map<string, InspectorEntry>();
+let inspectorObserver: MutationObserver | null = null;
+let inspectorMatchCount = 0;
+
+/** Build a short CSS selector for a single element. */
 function selectorForEl(el: Element): string {
   if (el.id) return `#${el.id}`;
   const dataAttr = Array.from(el.attributes).find((a) => a.name.startsWith("data-"));
@@ -233,75 +251,140 @@ function selectorForEl(el: Element): string {
   return el.tagName.toLowerCase() + (cls ? "." + cls : "");
 }
 
-function recordInspectorHit(text: string, node: Node) {
-  let el = node.parentElement;
+/**
+ * Snapshot the full ancestor chain RIGHT NOW (synchronously), record each
+ * ancestor in inspectorHits. Called from inside the MutationObserver callback
+ * so the node is still attached.
+ */
+function recordInspectorHit(text: string, startEl: Element | null) {
+  if (!startEl) return;
+  const chain: string[] = [];
+  let el: Element | null = startEl;
   let depth = 1;
-  while (el && el !== document.body && depth <= 8) {
+
+  while (el && el !== document.body && depth <= 10) {
     const sel = selectorForEl(el);
-    const entry = inspectorHits.get(sel) ?? { count: 0, minDepth: depth, examples: [] };
+    chain.push(sel);
+    const entry: InspectorEntry = inspectorHits.get(sel) ?? {
+      count: 0, minDepth: depth, examples: [], bestPath: [],
+    };
     entry.count += 1;
     entry.minDepth = Math.min(entry.minDepth, depth);
-    if (entry.examples.length < 5) entry.examples.push(text.trim().slice(0, 80));
+    if (entry.examples.length < 8) entry.examples.push(text.trim().slice(0, 80));
+    if (depth < (entry.bestPath.length || 99)) entry.bestPath = [...chain];
     inspectorHits.set(sel, entry);
     el = el.parentElement;
     depth++;
   }
+
+  inspectorMatchCount++;
+  // Log every match immediately — helpful for seeing ephemeral toasts
+  console.log(
+    `%c[Inspector #${inspectorMatchCount}]%c ${text.trim().slice(0, 60)}`,
+    "color:#f59e0b;font-weight:bold", "color:#d4d4d8",
+    "\n  →", chain.slice(0, 3).join(" > "),
+  );
 }
 
+/**
+ * Inspect a node that was just added or whose text changed.
+ * IMPORTANT: snapshot ancestor chain synchronously — do NOT defer.
+ */
 function processInspectorNode(node: Node) {
   const text = node.textContent ?? "";
-  if (ACTION_RE.test(text)) recordInspectorHit(text, node);
+  if (!ACTION_RE.test(text)) return;
+
+  // For a text node, start at its parent element.
+  // For an element, start at the element itself (textContent may be set directly).
+  const startEl = node.nodeType === Node.TEXT_NODE
+    ? node.parentElement
+    : (node as Element);
+
+  recordInspectorHit(text, startEl);
 }
 
 function startActionInspector() {
   if (inspectorObserver) {
-    console.log("[Poker] [Inspector] Already running.");
+    console.log("[Poker] [Inspector] Already running — call stop first to reset.");
     return;
   }
   inspectorHits.clear();
+  inspectorMatchCount = 0;
 
-  // One-shot scan of existing DOM
+  // One-shot scan of existing DOM text nodes
   const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
   let n: Node | null;
-  while ((n = walker.nextNode())) processInspectorNode(n);
+  let existingCount = 0;
+  while ((n = walker.nextNode())) {
+    if (ACTION_RE.test(n.textContent ?? "")) {
+      processInspectorNode(n);
+      existingCount++;
+    }
+  }
+  if (existingCount) {
+    console.log(`[Poker] [Inspector] Found ${existingCount} existing action(s) in DOM.`);
+  }
 
-  // Watch for new text
   inspectorObserver = new MutationObserver((mutations) => {
     for (const mut of mutations) {
+      // New nodes added — snapshot ancestor chain immediately (node may be
+      // removed in the same batch of mutations, before we next yield).
       for (const node of mut.addedNodes) {
         if (node.nodeType === Node.TEXT_NODE) {
           processInspectorNode(node);
         } else if (node.nodeType === Node.ELEMENT_NODE) {
+          // Also check the element itself (textContent set via innerHTML)
+          if (ACTION_RE.test((node as Element).textContent ?? "")) {
+            processInspectorNode(node);
+          }
+          // And walk child text nodes
           const w = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
           let nn: Node | null;
           while ((nn = w.nextNode())) processInspectorNode(nn);
         }
       }
+      // Text node edited in place
       if (mut.type === "characterData") processInspectorNode(mut.target);
     }
   });
-  inspectorObserver.observe(document.body, { childList: true, subtree: true, characterData: true });
-  console.log("%c[Poker] [Inspector] Started — waiting for opponent actions.", "color:#a78bfa;font-weight:bold");
+
+  inspectorObserver.observe(document.body, {
+    childList: true,
+    subtree: true,
+    characterData: true,
+  });
+
+  console.log(
+    "%c[Poker] [Inspector] Started — every match logs immediately. Use Report when ready.",
+    "color:#a78bfa;font-weight:bold",
+  );
 }
 
 function stopActionInspector() {
   inspectorObserver?.disconnect();
   inspectorObserver = null;
-  console.log("[Poker] [Inspector] Stopped.");
+  console.log(`[Poker] [Inspector] Stopped. Total matches: ${inspectorMatchCount}.`);
 }
 
 function reportActionInspector() {
   if (inspectorHits.size === 0) {
-    console.warn("[Poker] [Inspector] No action text detected yet. Wait for opponents to act.");
+    console.warn("[Poker] [Inspector] No matches yet — wait for opponents to act.");
     return;
   }
   const sorted = Array.from(inspectorHits.entries())
     .map(([sel, d]) => ({ sel, ...d }))
     .sort((a, b) => b.count - a.count || a.minDepth - b.minDepth);
 
-  console.group("[Poker] [Inspector] Ranked selector candidates");
+  console.group(`[Poker] [Inspector] Report — ${inspectorMatchCount} total matches`);
+  console.log("Rank  Selector                                             Hits    Depth  Example");
   sorted.slice(0, 15).forEach(({ sel, count, minDepth, examples }, i) => {
-    console.log(`#${i + 1}`.padEnd(4), sel.padEnd(52), `${count} hits`.padEnd(10), `depth ${minDepth}`, " |", examples[0]);
+    console.log(
+      `#${i + 1}`.padEnd(6),
+      sel.padEnd(53),
+      String(count).padEnd(8),
+      String(minDepth).padEnd(7),
+      examples[0] ?? "",
+    );
   });
   console.groupEnd();
 
@@ -310,9 +393,11 @@ function reportActionInspector() {
     `%c[Inspector] Best: "${best.sel}" (${best.count} hits, depth ${best.minDepth})`,
     "color:#4ade80;font-weight:bold",
   );
-  console.log(`%cUse: document.querySelectorAll("${best.sel}")`, "color:#60a5fa");
+  if (best.bestPath.length > 1) {
+    console.log(`%c  Full path: ${best.bestPath.join(" > ")}`, "color:#60a5fa");
+  }
+  console.log(`%c  querySelectorAll("${best.sel}")`, "color:#60a5fa");
 
-  // Send results back to background so the popup can display them
   chrome.runtime.sendMessage({
     type: "ACTION_INSPECTOR_RESULT",
     best: best.sel,
