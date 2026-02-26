@@ -360,6 +360,29 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
     return;
   }
+
+  // ── Action-log inspector ────────────────────────────────────────────────────
+  // popup → bg → poker tab (start/stop/report commands)
+  if (
+    message.type === "ACTION_INSPECTOR_START" ||
+    message.type === "ACTION_INSPECTOR_STOP" ||
+    message.type === "ACTION_INSPECTOR_REPORT"
+  ) {
+    if (pokerTabId) {
+      chrome.tabs.sendMessage(pokerTabId, { type: message.type });
+    }
+    sendResponse({ ok: true });
+    return;
+  }
+
+  // poker tab → bg → popup (results forwarded to any open popup)
+  if (message.type === "ACTION_INSPECTOR_RESULT") {
+    // Store last result so the popup can read it on open
+    (globalThis as Record<string, unknown>).__inspectorResult = message;
+    // Forward to all extension views (popup if open)
+    chrome.runtime.sendMessage(message).catch(() => {/* popup may be closed */});
+    return;
+  }
 });
 
 // Manual hotkey capture (still works alongside continuous mode)

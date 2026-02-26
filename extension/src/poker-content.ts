@@ -210,7 +210,120 @@ chrome.runtime.onMessage.addListener((message) => {
       spr: message.spr ?? null,
     };
   }
+
+  if (message.type === "ACTION_INSPECTOR_START") startActionInspector();
+  if (message.type === "ACTION_INSPECTOR_STOP")  stopActionInspector();
+  if (message.type === "ACTION_INSPECTOR_REPORT") reportActionInspector();
 });
+
+// ── Action-log DOM inspector ───────────────────────────────────────────────
+// Discovers which DOM selector carries opponent action text (raises/calls/folds).
+// Activated via the popup "Inspect" button → background → this message handler.
+// Results are logged to the browser console on the poker tab.
+
+const ACTION_RE = /\b(raises?(?:\s+to)?|calls?|folds?|checks?|bets?)\b/i;
+const inspectorHits = new Map<string, { count: number; minDepth: number; examples: string[] }>();
+let inspectorObserver: MutationObserver | null = null;
+
+function selectorForEl(el: Element): string {
+  if (el.id) return `#${el.id}`;
+  const dataAttr = Array.from(el.attributes).find((a) => a.name.startsWith("data-"));
+  if (dataAttr) return `${el.tagName.toLowerCase()}[${dataAttr.name}="${dataAttr.value}"]`;
+  const cls = Array.from(el.classList).filter((c) => !/^\d/.test(c)).slice(0, 3).join(".");
+  return el.tagName.toLowerCase() + (cls ? "." + cls : "");
+}
+
+function recordInspectorHit(text: string, node: Node) {
+  let el = node.parentElement;
+  let depth = 1;
+  while (el && el !== document.body && depth <= 8) {
+    const sel = selectorForEl(el);
+    const entry = inspectorHits.get(sel) ?? { count: 0, minDepth: depth, examples: [] };
+    entry.count += 1;
+    entry.minDepth = Math.min(entry.minDepth, depth);
+    if (entry.examples.length < 5) entry.examples.push(text.trim().slice(0, 80));
+    inspectorHits.set(sel, entry);
+    el = el.parentElement;
+    depth++;
+  }
+}
+
+function processInspectorNode(node: Node) {
+  const text = node.textContent ?? "";
+  if (ACTION_RE.test(text)) recordInspectorHit(text, node);
+}
+
+function startActionInspector() {
+  if (inspectorObserver) {
+    console.log("[Poker] [Inspector] Already running.");
+    return;
+  }
+  inspectorHits.clear();
+
+  // One-shot scan of existing DOM
+  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  let n: Node | null;
+  while ((n = walker.nextNode())) processInspectorNode(n);
+
+  // Watch for new text
+  inspectorObserver = new MutationObserver((mutations) => {
+    for (const mut of mutations) {
+      for (const node of mut.addedNodes) {
+        if (node.nodeType === Node.TEXT_NODE) {
+          processInspectorNode(node);
+        } else if (node.nodeType === Node.ELEMENT_NODE) {
+          const w = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
+          let nn: Node | null;
+          while ((nn = w.nextNode())) processInspectorNode(nn);
+        }
+      }
+      if (mut.type === "characterData") processInspectorNode(mut.target);
+    }
+  });
+  inspectorObserver.observe(document.body, { childList: true, subtree: true, characterData: true });
+  console.log("%c[Poker] [Inspector] Started — waiting for opponent actions.", "color:#a78bfa;font-weight:bold");
+}
+
+function stopActionInspector() {
+  inspectorObserver?.disconnect();
+  inspectorObserver = null;
+  console.log("[Poker] [Inspector] Stopped.");
+}
+
+function reportActionInspector() {
+  if (inspectorHits.size === 0) {
+    console.warn("[Poker] [Inspector] No action text detected yet. Wait for opponents to act.");
+    return;
+  }
+  const sorted = Array.from(inspectorHits.entries())
+    .map(([sel, d]) => ({ sel, ...d }))
+    .sort((a, b) => b.count - a.count || a.minDepth - b.minDepth);
+
+  console.group("[Poker] [Inspector] Ranked selector candidates");
+  sorted.slice(0, 15).forEach(({ sel, count, minDepth, examples }, i) => {
+    console.log(`#${i + 1}`.padEnd(4), sel.padEnd(52), `${count} hits`.padEnd(10), `depth ${minDepth}`, " |", examples[0]);
+  });
+  console.groupEnd();
+
+  const best = sorted[0];
+  console.log(
+    `%c[Inspector] Best: "${best.sel}" (${best.count} hits, depth ${best.minDepth})`,
+    "color:#4ade80;font-weight:bold",
+  );
+  console.log(`%cUse: document.querySelectorAll("${best.sel}")`, "color:#60a5fa");
+
+  // Send results back to background so the popup can display them
+  chrome.runtime.sendMessage({
+    type: "ACTION_INSPECTOR_RESULT",
+    best: best.sel,
+    hits: best.count,
+    depth: best.minDepth,
+    example: best.examples[0] ?? "",
+    all: sorted.slice(0, 5).map(({ sel, count, minDepth, examples }) => ({
+      sel, count, minDepth, example: examples[0] ?? "",
+    })),
+  });
+}
 
 
 // ── DOM Scraping ───────────────────────────────────────────────────────

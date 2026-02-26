@@ -8,11 +8,15 @@ const pokerDot = document.getElementById("poker-dot") as HTMLElement;
 const pokerStatus = document.getElementById("poker-status") as HTMLElement;
 const monitorBtn = document.getElementById("monitor-btn") as HTMLButtonElement;
 const playBtn = document.getElementById("play-btn") as HTMLButtonElement;
+const inspectBtn = document.getElementById("inspect-btn") as HTMLButtonElement;
+const inspectReportBtn = document.getElementById("inspect-report-btn") as HTMLButtonElement;
+const inspectorResult = document.getElementById("inspector-result") as HTMLElement;
 
 hotkeyEl.textContent = "Ctrl+Shift+P";
 
 let continuousActive = false;
 let currentMode: "off" | "monitor" | "play" = "off";
+let inspectorRunning = false;
 
 function updateToggleButton() {
   if (continuousActive) {
@@ -75,6 +79,8 @@ chrome.runtime.sendMessage({ type: "GET_STATUS" }, (response) => {
     pokerStatus.textContent = "Poker tab detected";
     monitorBtn.disabled = false;
     playBtn.disabled = false;
+    inspectBtn.disabled = false;
+    inspectReportBtn.disabled = false;
     currentMode = response.autopilotMode ?? "off";
     updateModeButtons();
   } else {
@@ -82,6 +88,8 @@ chrome.runtime.sendMessage({ type: "GET_STATUS" }, (response) => {
     pokerStatus.textContent = "No poker tab found";
     monitorBtn.disabled = true;
     playBtn.disabled = true;
+    inspectBtn.disabled = true;
+    inspectReportBtn.disabled = true;
   }
 });
 
@@ -109,4 +117,37 @@ monitorBtn.addEventListener("click", () => {
 
 playBtn.addEventListener("click", () => {
   setMode(currentMode === "play" ? "off" : "play");
+});
+
+// ── Inspector buttons ────────────────────────────────────────────────────────
+
+function updateInspectorButtons() {
+  inspectBtn.textContent = inspectorRunning ? "Stop Inspect" : "Inspect Log";
+  inspectBtn.classList.toggle("inspector-active", inspectorRunning);
+}
+
+inspectBtn.addEventListener("click", () => {
+  const msgType = inspectorRunning ? "ACTION_INSPECTOR_STOP" : "ACTION_INSPECTOR_START";
+  inspectorRunning = !inspectorRunning;
+  updateInspectorButtons();
+  chrome.runtime.sendMessage({ type: msgType });
+});
+
+inspectReportBtn.addEventListener("click", () => {
+  chrome.runtime.sendMessage({ type: "ACTION_INSPECTOR_REPORT" });
+});
+
+// Listen for results forwarded from the background
+chrome.runtime.onMessage.addListener((message) => {
+  if (message.type !== "ACTION_INSPECTOR_RESULT") return;
+  inspectorResult.style.display = "block";
+  const all = (message.all as Array<{ sel: string; count: number; minDepth: number; example: string }>) ?? [];
+  const rows = all.map(({ sel, count, minDepth, example }, i) =>
+    `<div>${i + 1}. <b style="color:#e4e4e7">${sel}</b> — ${count} hits, depth ${minDepth}<br>
+     <span style="color:#71717a">${example}</span></div>`,
+  ).join("");
+  inspectorResult.innerHTML =
+    `<span class="best">${message.best} (${message.hits} hits)</span>` +
+    `<div style="color:#71717a;margin-bottom:4px;font-size:10px">${message.example}</div>` +
+    rows;
 });

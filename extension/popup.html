@@ -99,6 +99,27 @@
       border-top: 1px solid #27272a;
       padding-top: 12px;
     }
+    .inspector-result {
+      font-size: 11px;
+      margin-top: 8px;
+      padding: 6px 8px;
+      background: #1c1917;
+      border: 1px solid #3f3f46;
+      border-radius: 4px;
+      color: #a1a1aa;
+      word-break: break-all;
+    }
+    .inspector-result .best {
+      color: #4ade80;
+      font-weight: bold;
+      display: block;
+      margin-bottom: 2px;
+    }
+    .toggle-btn.inspector-active {
+      background: #1c1917;
+      border-color: #f59e0b;
+      color: #fde68a;
+    }
     kbd {
       background: #27272a;
       border: 1px solid #3f3f46;
@@ -127,6 +148,13 @@
     <button id="monitor-btn" class="toggle-btn" disabled>Monitor</button>
     <button id="play-btn" class="toggle-btn" disabled>Play</button>
   </div>
+  <hr class="divider">
+  <div class="section-label">Dev Tools</div>
+  <div class="btn-row">
+    <button id="inspect-btn" class="toggle-btn" disabled>Inspect Log</button>
+    <button id="inspect-report-btn" class="toggle-btn" disabled>Report</button>
+  </div>
+  <div id="inspector-result" style="display:none" class="inspector-result"></div>
   <div class="hotkey-hint">
     Press <kbd id="hotkey">Ctrl+Shift+P</kbd> for manual capture
   </div>
