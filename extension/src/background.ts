@@ -43,6 +43,7 @@ let pokerWindowId: number | null = null;
 // Autopilot state
 let pokerTabId: number | null = null;
 let autopilotMode: "off" | "monitor" | "play" = "off";
+let inspectorRunning = false;
 const BASE_URL = "http://localhost:3006"; // override APP_URL env var at build time if needed
 const AUTOPILOT_API_URL = `${BASE_URL}/api/autopilot`;
 const DECISION_API_URL = `${BASE_URL}/api/decision`;
@@ -218,6 +219,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       continuous: isContinuousActive(),
       pokerConnected: pokerTabId !== null,
       autopilotMode,
+      inspectorRunning,
     });
     return;
   }
@@ -368,6 +370,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     message.type === "ACTION_INSPECTOR_STOP" ||
     message.type === "ACTION_INSPECTOR_REPORT"
   ) {
+    if (message.type === "ACTION_INSPECTOR_START") inspectorRunning = true;
+    if (message.type === "ACTION_INSPECTOR_STOP")  inspectorRunning = false;
     if (pokerTabId) {
       chrome.tabs.sendMessage(pokerTabId, { type: message.type });
     }

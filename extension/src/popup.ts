@@ -59,6 +59,12 @@ function setMode(mode: "off" | "monitor" | "play") {
 }
 
 chrome.runtime.sendMessage({ type: "GET_STATUS" }, (response) => {
+  // Restore inspector button state from background
+  if (response?.inspectorRunning !== undefined) {
+    inspectorRunning = response.inspectorRunning;
+    updateInspectorButtons();
+  }
+
   // Web app connection status
   if (response?.connected) {
     statusDot.classList.add("connected");
