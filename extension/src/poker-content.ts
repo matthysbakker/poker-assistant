@@ -18,11 +18,15 @@
 import { applyRuleTree, applyRuleTreeAllPersonas, type PersonaPostflopDecision } from "../../lib/poker/rule-tree";
 import { facingRaiseDecision, facing3BetDecision, facingLimpDecision } from "../../lib/poker/facing-raise";
 import { rfiDecision } from "../../lib/poker/rfi-fallback";
-import { clearEvalCache } from "../../lib/poker/hand-evaluator";
-import { clearBoardCache } from "../../lib/poker/board-analyzer";
+import { clearEvalCache, evaluateHand } from "../../lib/poker/hand-evaluator";
+import { clearBoardCache, analyzeBoard } from "../../lib/poker/board-analyzer";
 import { parseCurrency } from "../../lib/poker/equity/pot-odds";
+import { lookupGtoSpot } from "../../lib/poker/gto/lookup";
+import { DEFAULT_VILLAIN_RANGE, type VillainRange } from "../../lib/poker/villain-range";
 import type { LocalDecision } from "../../lib/poker/types";
 import type { PlayerExploitType } from "../../lib/poker/exploit";
+import type { OpponentStats } from "../../lib/poker/opponent-stats";
+import { statsToVillainRange } from "../../lib/poker/opponent-stats";
 import { isValidAction } from "./messages";
 
 console.log("[Poker] Content script loaded on", window.location.href);
@@ -114,6 +118,16 @@ let lastHeroTurn = false;
 let streetActions: string[] = []; // accumulates opponent actions between hero turns (todo 044)
 let decisionWatchdog: ReturnType<typeof setTimeout> | null = null; // timeout guard (todo 031)
 let watchdogToken: { cancelled: boolean } | null = null;           // cancellation token (todo 059)
+
+// ── GTO + Equity Engine State ───────────────────────────────────────────
+/** Per-seat opponent stats fetched at hand start (VPIP → villain range) */
+let seatStats: Record<number, OpponentStats> = {};
+/** Cached villain range for the main villain (last aggressor or default random) */
+let opponentVillainRange: VillainRange = DEFAULT_VILLAIN_RANGE;
+/** Last decision source label for overlay */
+let lastDecisionSource: "gto" | "equity" | "ruletree" | null = null;
+/** Last range equity computed (0–1) for overlay display */
+let lastRangeEquity: number | null = null;
 
 // ── Registration ───────────────────────────────────────────────────────
 
@@ -677,9 +691,52 @@ function buildTurnMessage(state: GameState): string {
   return lines.join("\n");
 }
 
-// ── Persona Request ────────────────────────────────────────────────────
+// ── API ─────────────────────────────────────────────────────────────────
 
-const PERSONA_API_URL = "http://localhost:3006/api/persona";
+const API_BASE = "http://localhost:3006";
+const PERSONA_API_URL = `${API_BASE}/api/persona`;
+
+/** Fetch opponent stats and cache villain range for a seat. Fire-and-forget pattern. */
+async function fetchOpponentStats(seat: number, username: string): Promise<void> {
+  try {
+    const res = await fetch(`${API_BASE}/api/stats?username=${encodeURIComponent(username)}`);
+    if (!res.ok) return;
+    const data = await res.json();
+    if (data.stats) {
+      seatStats[seat] = data.stats;
+      console.log(`[Poker] Opponent stats for seat ${seat} (${username}):`, data.stats);
+    }
+  } catch {
+    // Server not running or network error — silently skip
+  }
+}
+
+/** Fetch range equity from /api/equity. Returns null on timeout/error (fall back to outs-based). */
+async function fetchRangeEquity(
+  heroCards: string[],
+  communityCards: string[],
+  villainCombos: string[],
+): Promise<number | null> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 3000); // 3s timeout
+  try {
+    const res = await fetch(`${API_BASE}/api/equity`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ heroCards, communityCards, villainCombos }),
+      signal: controller.signal,
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return typeof data.equity === "number" ? data.equity : null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+// ── Persona Request ────────────────────────────────────────────────────
 
 async function requestPersona(heroCards: string[], position: string) {
   if (lastPersonaRec) return; // already set for this hand
@@ -737,7 +794,10 @@ async function requestPersona(heroCards: string[], position: string) {
  * Apply the local rule tree for post-flop spots.
  * Returns null only when called pre-flop (< 3 community cards) or no hero cards.
  */
-function localDecide(state: GameState): LocalDecision | null {
+function localDecide(
+  state: GameState,
+  extra?: { rangeEquity?: number; gtoHint?: import("../../lib/poker/gto/types").GtoEntry | null },
+): LocalDecision | null {
   // Post-flop only: need ≥ 3 community cards (guard against partial deal animation)
   if (state.communityCards.length < 3 || state.heroCards.length === 0) return null;
 
@@ -785,6 +845,9 @@ function localDecide(state: GameState): LocalDecision | null {
       activePlayers: activePlayers.length,
       opponentType,
       handsObserved,
+      rangeEquity: extra?.rangeEquity,
+      villainRange: opponentVillainRange,
+      gtoHint: extra?.gtoHint,
     });
   } catch (err) {
     console.error("[Poker] localDecide() threw:", err);
@@ -1404,6 +1467,7 @@ function updateOverlay(state: GameState) {
     <div>Turn: <span style="color:${turnColor}">${turn}</span></div>
     <div>Actions: ${actions}</div>
     <div style="color:#71717a;margin-top:4px">Players: ${state.players.filter((p) => p.name).length}</div>
+    ${lastDecisionSource || lastRangeEquity !== null ? `<div style="color:#71717a;margin-top:2px">Engine: <span style="color:#a78bfa">${escapeHtml(lastDecisionSource ?? "—")}</span>${lastRangeEquity !== null ? ` | Equity: <span style="color:#38bdf8">${Math.round(lastRangeEquity * 100)}%</span>` : ""}</div>` : ""}
     ${personaHtml}
     ${claudeHtml}
   `;
@@ -1429,7 +1493,7 @@ function sendDebugLog(data: Record<string, unknown>) {
   chrome.runtime.sendMessage({ type: "AUTOPILOT_DEBUG", data });
 }
 
-function processGameState() {
+async function processGameState() {
   const state = scrapeGameState();
 
   updateOverlay(state);
@@ -1498,6 +1562,10 @@ function processGameState() {
     allPostflopDecisions = null;
     pendingPlayAction = null;
     preflopFastPathFired = false;
+    seatStats = {};
+    opponentVillainRange = DEFAULT_VILLAIN_RANGE;
+    lastDecisionSource = null;
+    lastRangeEquity = null;
     clearEvalCache();
     clearBoardCache();
 
@@ -1513,6 +1581,13 @@ function processGameState() {
         const rawPosition = getPosition(state.heroSeat, state.dealerSeat, activePlayers.length);
         const position = rawPosition === "??" ? "CO" : rawPosition;
         requestPersona(state.heroCards, position);
+
+        // Fetch opponent stats for villain range estimation (fire-and-forget)
+        for (const p of state.players) {
+          if (p.seat !== state.heroSeat && p.name && p.hasCards) {
+            fetchOpponentStats(p.seat, p.name);
+          }
+        }
       }
     }
   }
@@ -1729,7 +1804,7 @@ function processGameState() {
       }
     }
 
-    // Phase 4 — Post-flop local engine fast-path (always used)
+    // Phase 3 + 4 — Post-flop decision pipeline (GTO lookup → equity → rule tree)
     if (autopilotMode !== "off" && state.communityCards.length >= 3) {
       // Compute all-persona decisions for overlay (fire-and-forget, no blocking)
       try {
@@ -1737,10 +1812,65 @@ function processGameState() {
       } catch (_) {
         allPostflopDecisions = null;
       }
-      const local = localDecide(state);
+
+      // Derive position and board for Phase 3 GTO lookup
+      const pfActivePlayers = state.players.filter((p) => p.name && !p.folded && p.hasCards);
+      const pfRawPos = getPosition(state.heroSeat, state.dealerSeat, pfActivePlayers.length);
+      const pfPos = pfRawPos === "BTN/SB" ? "BTN" : pfRawPos === "??" ? "CO" : pfRawPos;
+      const pfCallAction = state.availableActions.find((a) => a.type === "CALL");
+      const pfCallAmount = parseCurrency(pfCallAction?.amount);
+      const pfFacingBet = pfCallAmount > 0;
+
+      const pfBoard = analyzeBoard(state.communityCards);
+      const pfHand = evaluateHand(state.heroCards, state.communityCards);
+
+      // Phase 3 — GTO lookup
+      let gtoHint: import("../../lib/poker/gto/types").GtoEntry | null = null;
+      const gtoResult = lookupGtoSpot(pfPos, pfBoard, pfHand, pfFacingBet);
+      if (gtoResult.hit) {
+        gtoHint = gtoResult.entry;
+        // High-confidence GTO action: execute immediately without equity fetch
+        if (gtoResult.entry.frequency >= 0.70) {
+          const pot = parseCurrency(state.pot);
+          const gtoAmount = gtoResult.entry.sizingFraction > 0
+            ? Math.round(pot * gtoResult.entry.sizingFraction * 100) / 100
+            : null;
+          executing = true;
+          lastDecisionSource = "gto";
+          console.log(`[Poker] [GTO] ${gtoResult.entry.action}${gtoAmount != null ? ` €${gtoAmount.toFixed(2)}` : ""} (freq ${(gtoResult.entry.frequency * 100).toFixed(0)}%) — ${gtoResult.entry.key}`);
+          safeExecuteAction(
+            { action: gtoResult.entry.action, amount: gtoAmount, reasoning: `GTO: ${gtoResult.entry.key}` },
+            "local",
+          );
+          lastHeroTurn = state.isHeroTurn;
+          lastState = state;
+          return;
+        }
+      }
+
+      // Phase 4 — Fetch range equity (3s timeout; fallback to outs-based inside rule tree)
+      // Determine main villain for range: last aggressor or first active opponent
+      const pfOpponents = pfActivePlayers.filter((p) => p.seat !== state.heroSeat);
+      const mainVillainSeat = pfOpponents[0]?.seat;
+      if (mainVillainSeat !== undefined && seatStats[mainVillainSeat]) {
+        opponentVillainRange = statsToVillainRange(seatStats[mainVillainSeat]);
+      }
+
+      const rangeEquity = await fetchRangeEquity(
+        state.heroCards,
+        state.communityCards,
+        opponentVillainRange.combos,
+      );
+
+      if (rangeEquity !== null) {
+        lastRangeEquity = rangeEquity;
+      }
+
+      const local = localDecide(state, { rangeEquity: rangeEquity ?? undefined, gtoHint });
       if (local) {
         executing = true;
-        console.log(`[Poker] [Local] ${local.action}${local.amount != null ? ` €${local.amount.toFixed(2)}` : ""} (confidence ${local.confidence.toFixed(2)}) — ${local.reasoning}`);
+        lastDecisionSource = rangeEquity !== null ? "equity" : "ruletree";
+        console.log(`[Poker] [Local/${lastDecisionSource}] ${local.action}${local.amount != null ? ` €${local.amount.toFixed(2)}` : ""} (confidence ${local.confidence.toFixed(2)}) — ${local.reasoning}`);
         // Forward decision to web app for observability — fire-and-forget via background
         chrome.runtime.sendMessage({
           type: "LOCAL_DECISION",
@@ -1749,7 +1879,7 @@ function processGameState() {
             amount: local.amount,
             confidence: local.confidence,
             reasoning: local.reasoning,
-            source: "local",
+            source: lastDecisionSource,
           },
         });
         safeExecuteAction(
