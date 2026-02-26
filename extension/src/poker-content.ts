@@ -2151,3 +2151,56 @@ function startObserving() {
 
 // startObserving() handles its own retry when .table-area isn't found yet (todo 047)
 startObserving();
+
+// ── Debug bridge ────────────────────────────────────────────────────────
+// Polls /api/debug/command every 2s. Supported command types:
+//   DOM_QUERY  { selector }  → outerHTML of all matching elements (max 5)
+//   DOM_HTML   { selector }  → innerHTML of first match
+//   STATE_DUMP {}            → current gameState snapshot
+//
+// Results are POSTed to /api/debug/result so Claude can read them directly.
+
+const DEBUG_COMMAND_URL = `${API_BASE}/api/debug/command`;
+const DEBUG_RESULT_URL  = `${API_BASE}/api/debug/result`;
+
+async function pollDebugCommand() {
+  try {
+    const res = await fetch(DEBUG_COMMAND_URL);
+    if (!res.ok) return;
+    const cmd = await res.json();
+    if (!cmd?.type) return;
+
+    // Clear the command immediately so we don't re-execute it
+    await fetch(DEBUG_COMMAND_URL, { method: "DELETE" });
+
+    let result: unknown;
+
+    if (cmd.type === "DOM_QUERY" && cmd.selector) {
+      const els = Array.from(document.querySelectorAll(cmd.selector)).slice(0, 5);
+      result = els.map(el => ({
+        tag: el.tagName.toLowerCase(),
+        className: el.className,
+        id: el.id,
+        textContent: el.textContent?.trim().slice(0, 200),
+        outerHTML: el.outerHTML.slice(0, 500),
+      }));
+    } else if (cmd.type === "DOM_HTML" && cmd.selector) {
+      const el = document.querySelector(cmd.selector);
+      result = el ? el.innerHTML.slice(0, 2000) : null;
+    } else if (cmd.type === "STATE_DUMP") {
+      result = lastState;
+    } else {
+      result = { error: `Unknown command type: ${cmd.type}` };
+    }
+
+    await fetch(DEBUG_RESULT_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ command: cmd, result }),
+    });
+  } catch {
+    // server may be off — silent
+  }
+}
+
+setInterval(pollDebugCommand, 2000);
