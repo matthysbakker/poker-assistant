@@ -381,10 +381,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   // poker tab → bg → popup (results forwarded to any open popup)
   if (message.type === "ACTION_INSPECTOR_RESULT") {
-    // Store last result so the popup can read it on open
-    (globalThis as Record<string, unknown>).__inspectorResult = message;
-    // Forward to all extension views (popup if open)
+    // Forward to popup if open
     chrome.runtime.sendMessage(message).catch(() => {/* popup may be closed */});
+    // Persist to disk so Claude Code can read it directly
+    fetch(`${BASE_URL}/api/inspector-result`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(message),
+    }).catch((err) => console.warn("[BG] inspector-result persist failed:", err));
     return;
   }
 });
