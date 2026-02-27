@@ -2345,6 +2345,20 @@ async function pollDebugCommand() {
         const after = document.querySelectorAll("*").length;
         result = { newElements: after - before, popupCandidates: found };
       }
+    } else if (cmd.type === "HOVER_READ" && cmd.selector) {
+      // Hover, wait 700ms, read .hud-tooltip innerHTML, then dismiss.
+      const target = document.querySelector(cmd.selector as string);
+      if (!target) {
+        result = { error: `Selector not found: ${cmd.selector}` };
+      } else {
+        target.dispatchEvent(new MouseEvent("mouseenter", { bubbles: true }));
+        target.dispatchEvent(new MouseEvent("mouseover",  { bubbles: true }));
+        await new Promise<void>((resolve) => setTimeout(resolve, 700));
+        const popup = document.querySelector(".hud-tooltip");
+        result = popup ? popup.innerHTML.slice(0, 4000) : null;
+        target.dispatchEvent(new MouseEvent("mouseleave", { bubbles: true }));
+        target.dispatchEvent(new MouseEvent("mouseout",   { bubbles: true }));
+      }
     } else {
       result = { error: `Unknown command type: ${cmd.type}` };
     }
