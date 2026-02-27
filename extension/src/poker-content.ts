@@ -2297,6 +2297,54 @@ async function pollDebugCommand() {
       // Like DOM_HTML but returns up to 8000 chars
       const el = document.querySelector(cmd.selector);
       result = el ? el.innerHTML.slice(0, 8000) : null;
+    } else if (cmd.type === "HOVER_FIND_POPUP" && cmd.selector) {
+      // Simulate hover on an element, wait for React to render popup, then find it.
+      // Searches for any element containing popup-like text (PFR, 3BET, ATS, action history).
+      const target = document.querySelector(cmd.selector as string);
+      if (!target) {
+        result = { error: `Selector not found: ${cmd.selector}` };
+      } else {
+        // Snapshot element count before hover so we can detect new elements
+        const before = document.querySelectorAll("*").length;
+
+        // Dispatch hover events
+        target.dispatchEvent(new MouseEvent("mouseenter", { bubbles: true }));
+        target.dispatchEvent(new MouseEvent("mouseover",  { bubbles: true }));
+
+        // Wait for React render
+        await new Promise<void>((resolve) => setTimeout(resolve, 600));
+
+        // Search entire document for popup-like content
+        const popupKeywords = ["pfr", "3bet", "ats", "action history", "pre-flop", "hands"];
+        const found: Array<{ selector: string; className: string; textContent: string; innerHTML: string }> = [];
+        document.querySelectorAll("*").forEach((el) => {
+          if (found.length >= 3) return;
+          const text = (el.textContent ?? "").toLowerCase();
+          const hasKeyword = popupKeywords.some((kw) => text.includes(kw));
+          if (!hasKeyword) return;
+          // Only report leaf-ish containers (not huge wrappers)
+          if ((el.textContent?.length ?? 0) > 500) return;
+          // Build a simple selector string
+          const sel = el.tagName.toLowerCase()
+            + (el.id ? `#${el.id}` : "")
+            + (el.className && typeof el.className === "string"
+                ? "." + el.className.trim().replace(/\s+/g, ".").slice(0, 40)
+                : "");
+          found.push({
+            selector: sel,
+            className: typeof el.className === "string" ? el.className : "",
+            textContent: (el.textContent ?? "").trim().slice(0, 300),
+            innerHTML: el.innerHTML.slice(0, 600),
+          });
+        });
+
+        // Dismiss hover
+        target.dispatchEvent(new MouseEvent("mouseleave", { bubbles: true }));
+        target.dispatchEvent(new MouseEvent("mouseout",   { bubbles: true }));
+
+        const after = document.querySelectorAll("*").length;
+        result = { newElements: after - before, popupCandidates: found };
+      }
     } else {
       result = { error: `Unknown command type: ${cmd.type}` };
     }
