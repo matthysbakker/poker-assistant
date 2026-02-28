@@ -17,26 +17,26 @@
     "test": "bun test lib/poker/__tests__/"
   },
   "dependencies": {
-    "@ai-sdk/anthropic": "^3.0.44",
-    "@ai-sdk/react": "^3.0.88",
-    "ai": "^6.0.86",
+    "@ai-sdk/anthropic": "^3.0.50",
+    "@ai-sdk/react": "^3.0.107",
+    "ai": "^6.0.105",
     "next": "16.1.6",
     "poker-odds-calculator": "^0.4.0",
-    "react": "19.2.3",
-    "react-dom": "19.2.3",
+    "react": "19.2.4",
+    "react-dom": "19.2.4",
     "zod": "^4.3.6"
   },
   "devDependencies": {
-    "@tailwindcss/postcss": "^4",
+    "@tailwindcss/postcss": "^4.2.1",
     "@types/bun": "^1.3.9",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "babel-plugin-react-compiler": "1.0.0",
-    "chrome-types": "^0.1.415",
+    "chrome-types": "^0.1.420",
     "eslint": "^9",
     "eslint-config-next": "16.1.6",
-    "tailwindcss": "^4",
+    "tailwindcss": "^4.2.1",
     "typescript": "^5"
   },
   "ignoreScripts": [

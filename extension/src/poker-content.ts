@@ -124,6 +124,8 @@ let watchdogToken: { cancelled: boolean } | null = null;           // cancellati
 let seatStats: Record<number, OpponentStats> = {};
 /** Cached villain range for the main villain (last aggressor or default random) */
 let opponentVillainRange: VillainRange = DEFAULT_VILLAIN_RANGE;
+/** HUD popup stats collected at hand start — keyed by seat number */
+let handPopupStats: Record<number, PopupStats> = {};
 /** Last decision source label for overlay */
 let lastDecisionSource: "gto" | "equity" | "ruletree" | null = null;
 /** Last range equity computed (0–1) for overlay display */
@@ -694,6 +696,24 @@ interface DomPlayerStat {
   afClass: string | null;
 }
 
+/**
+ * Stats scraped from the HUD popup (triggered by hovering over a player's HUD wings).
+ * Contains per-hand action history and extended stats (PFR, 3BET, ATS).
+ */
+interface PopupStats {
+  seat: number;
+  hands: number | null;
+  pfr: number | null;
+  threeBet: number | null;
+  ats: number | null;
+  actionHistory: {
+    preflop: string; // e.g. "Raise" or "Call → Raise"
+    flop: string;
+    turn: string;
+    river: string;
+  };
+}
+
 let statDebugLogged = false;
 
 /**
@@ -761,6 +781,114 @@ function scrapeHudStats(): DomPlayerStat[] {
 /** @deprecated use scrapeHudStats() */
 function scrapeTableStats(): DomPlayerStat[] {
   return scrapeHudStats();
+}
+
+/**
+ * Hover over a player's HUD wings, wait for the popup to render, parse its contents,
+ * and dismiss the hover. Returns null when no hover-trigger exists for the seat.
+ *
+ * Popup DOM structure (confirmed):
+ *   .hud-tooltip
+ *     .player-hud-popup-wrapper
+ *       .player-hud-popup
+ *         .player-hud-general-stats-wrapper   ← stat rows (PFR, 3BET, ATS…) + hands count
+ *         .player-hud-action-history-wrapper
+ *           .hud-action-history-round-wrapper  ← one per street
+ *             .hud-action-history-round-name   ← "Pre-flop:", "Flop:", "Turn:", "River:"
+ *             .hud-action-history-round-actions ← e.g. "Call" or "Check → Bet"
+ */
+async function scrapePopupStats(seat: number): Promise<PopupStats | null> {
+  // Try both selector forms — some seats may be nested differently
+  const trigger =
+    document.querySelector(`.player-area.player-seat-${seat} .hover-trigger`) ??
+    document.querySelector(`.player-seat-${seat} .hover-trigger`);
+
+  if (!trigger) {
+    console.log(`[Poker] No hover-trigger for seat ${seat} — skipping popup scrape`);
+    return null;
+  }
+
+  trigger.dispatchEvent(new MouseEvent("mouseenter", { bubbles: true }));
+  trigger.dispatchEvent(new MouseEvent("mouseover",  { bubbles: true }));
+  await new Promise<void>((resolve) => setTimeout(resolve, 700));
+
+  const popup = document.querySelector(".hud-tooltip");
+  if (!popup) {
+    trigger.dispatchEvent(new MouseEvent("mouseleave", { bubbles: true }));
+    trigger.dispatchEvent(new MouseEvent("mouseout",   { bubbles: true }));
+    return null;
+  }
+
+  // Hands count
+  const handsEl = popup.querySelector(".player-hud-hands-value");
+  const handsRaw = handsEl?.textContent?.trim() ?? "";
+  const hands = handsRaw && !isNaN(parseInt(handsRaw, 10)) ? parseInt(handsRaw, 10) : null;
+
+  // Extended stats — search for leaf elements whose text matches a stat label,
+  // then read the adjacent sibling or last sibling in the parent for the value.
+  function readStat(label: string): number | null {
+    for (const el of Array.from(popup!.querySelectorAll("*"))) {
+      if (el.children.length > 0) continue; // leaf nodes only
+      const text = el.textContent?.trim().toUpperCase() ?? "";
+      if (text !== label.toUpperCase()) continue;
+      // Try next sibling element
+      const sib = el.nextElementSibling;
+      if (sib) {
+        const v = parseFloat(sib.textContent?.trim().replace("%", "") ?? "");
+        if (!isNaN(v)) return v;
+      }
+      // Try last child of parent
+      const parent = el.parentElement;
+      if (parent) {
+        const last = parent.children[parent.children.length - 1];
+        if (last && last !== el) {
+          const v = parseFloat(last.textContent?.trim().replace("%", "") ?? "");
+          if (!isNaN(v)) return v;
+        }
+      }
+    }
+    return null;
+  }
+
+  const pfr      = readStat("PFR%") ?? readStat("PFR");
+  const threeBet = readStat("3BET%") ?? readStat("3BET");
+  const ats      = readStat("ATS%") ?? readStat("ATS");
+
+  // Per-street action history
+  const actionHistory = { preflop: "", flop: "", turn: "", river: "" };
+  popup.querySelectorAll(".hud-action-history-round-wrapper").forEach((row) => {
+    const name    = row.querySelector(".hud-action-history-round-name")?.textContent?.trim().toLowerCase() ?? "";
+    const actions = row.querySelector(".hud-action-history-round-actions")?.textContent?.trim() ?? "";
+    if (name.includes("pre-flop") || name.includes("preflop")) actionHistory.preflop = actions;
+    else if (name.includes("flop"))  actionHistory.flop  = actions;
+    else if (name.includes("turn"))  actionHistory.turn  = actions;
+    else if (name.includes("river")) actionHistory.river = actions;
+  });
+
+  trigger.dispatchEvent(new MouseEvent("mouseleave", { bubbles: true }));
+  trigger.dispatchEvent(new MouseEvent("mouseout",   { bubbles: true }));
+
+  console.log(`[Poker] Popup stats seat ${seat}: hands=${hands}, pfr=${pfr}, actionHistory=`, actionHistory);
+  return { seat, hands, pfr, threeBet, ats, actionHistory };
+}
+
+/**
+ * Collect HUD popup stats for all active opponents at hand start.
+ * Runs serially (one hover at a time) to avoid stacking popups.
+ * Results stored in handPopupStats — fire-and-forget.
+ */
+async function collectAllPopupStats(state: GameState): Promise<void> {
+  handPopupStats = {};
+  for (const p of state.players) {
+    if (p.seat === state.heroSeat || !p.name || !p.hasCards) continue;
+    const stats = await scrapePopupStats(p.seat);
+    if (stats) handPopupStats[p.seat] = stats;
+    // Brief pause between seats so React can settle between hovers
+    await new Promise<void>((resolve) => setTimeout(resolve, 200));
+  }
+  if (Object.keys(handPopupStats).length > 0) {
+    console.log("[Poker] Popup stats collected for", Object.keys(handPopupStats).length, "opponents");
+  }
 }
 
 type TableTemperatureLocal =
@@ -961,6 +1089,29 @@ function buildTurnMessage(state: GameState): string {
   if (streetActions.length > 0) {
     lines.push(...streetActions);
     streetActions = [];
+  }
+
+  // Inject HUD popup action history — available after collectAllPopupStats fires at hand start
+  const popupSeats = Object.keys(handPopupStats).map(Number);
+  if (popupSeats.length > 0) {
+    const historyLines: string[] = [];
+    for (const seat of popupSeats) {
+      const ps = handPopupStats[seat];
+      const p = state.players.find((pl) => pl.seat === seat);
+      const name = p?.name ?? `Seat ${seat}`;
+      const parts: string[] = [];
+      if (ps.actionHistory.preflop) parts.push(`pre-flop: ${ps.actionHistory.preflop}`);
+      if (ps.actionHistory.flop)    parts.push(`flop: ${ps.actionHistory.flop}`);
+      if (ps.actionHistory.turn)    parts.push(`turn: ${ps.actionHistory.turn}`);
+      if (ps.actionHistory.river)   parts.push(`river: ${ps.actionHistory.river}`);
+      if (parts.length > 0) {
+        const handsNote = ps.hands !== null ? ` (${ps.hands} hands)` : "";
+        historyLines.push(`${name}${handsNote}: ${parts.join(", ")}`);
+      }
+    }
+    if (historyLines.length > 0) {
+      lines.push("Opponent action history this hand:\n" + historyLines.join("\n"));
+    }
   }
 
   if (state.pot) {
@@ -1847,6 +1998,7 @@ async function processGameState() {
     pendingPlayAction = null;
     preflopFastPathFired = false;
     seatStats = {};
+    handPopupStats = {};
     opponentVillainRange = DEFAULT_VILLAIN_RANGE;
     lastDecisionSource = null;
     lastRangeEquity = null;
@@ -1872,6 +2024,9 @@ async function processGameState() {
             fetchOpponentStats(p.seat, p.name);
           }
         }
+
+        // Collect HUD popup stats for all opponents (fire-and-forget)
+        collectAllPopupStats(state);
       }
     }
   }
@@ -2359,6 +2514,17 @@ async function pollDebugCommand() {
         target.dispatchEvent(new MouseEvent("mouseleave", { bubbles: true }));
         target.dispatchEvent(new MouseEvent("mouseout",   { bubbles: true }));
       }
+    } else if (cmd.type === "HOVER_ALL_SEATS") {
+      // Probe every seat 1-9, try both selector forms, report which have .hover-trigger.
+      const seats: Array<{ seat: number; selector: string | null }> = [];
+      for (let s = 1; s <= 9; s++) {
+        const sel1 = `.player-area.player-seat-${s} .hover-trigger`;
+        const sel2 = `.player-seat-${s} .hover-trigger`;
+        if (document.querySelector(sel1))      seats.push({ seat: s, selector: sel1 });
+        else if (document.querySelector(sel2)) seats.push({ seat: s, selector: sel2 });
+        else                                    seats.push({ seat: s, selector: null });
+      }
+      result = seats;
     } else {
       result = { error: `Unknown command type: ${cmd.type}` };
     }
